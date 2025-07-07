@@ -16,7 +16,7 @@ Not formally tested. Probably ~2000 ELO
 - [Move ordering](https://www.chessprogramming.org/Move_Ordering) heuristics: history, hash move, MVV-LVA, etc.
 - Search heuristics: [late move reduction](https://www.chessprogramming.org/Late_Move_Reductions), [null move pruning](https://www.chessprogramming.org/Null_Move_Pruning), etc.
 - [Zobrist hashing](https://www.chessprogramming.org/Zobrist_Hashing)
-- [Transposition table](https://www.chessprogramming.org/Transposition_Table): store information learned about position to avoid researching it.
+- [Transposition table](https://www.chessprogramming.org/Transposition_Table): store information learned about a position to avoid re-searching it.
 - Evaluation function: evaluate position based on material, piece mobility, pawn structure, etc.
 - [Opening book](https://www.chessprogramming.org/Opening_Book) support: play random opening from database so it is not deterministic.
 - GUI: run in python
