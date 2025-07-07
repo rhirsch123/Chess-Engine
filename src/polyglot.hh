@@ -8,7 +8,7 @@
 #include "position.hh"
 
 namespace Polyglot {
-	Move get_book_move(const Position& position, std::string file);
+    Move get_book_move(const Position& position, std::string file);
 }
 
 #endif
