@@ -3,7 +3,7 @@
 ### Usage
 To play engine with GUI:  
 pip install pygame  
-Optional: edit main.cc file to play white/black, set time per move, set custum position, etc.  
+Optional: edit main.cc file to play white/black, set time format, set custum position, etc.  
 make  
 ./main  
 
