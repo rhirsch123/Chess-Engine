@@ -1,6 +1,6 @@
 CC = g++
 CFLAGS = -std=c++17 -g -O3 -flto
-SRCS = main.cc position.cc engine.cc evaluation.cc zobrist.cc bitboards.cc polyglot.cc
+SRCS = main.cc position.cc move_generator.cc engine.cc evaluation.cc zobrist.cc bitboards.cc polyglot.cc
 OBJS = $(SRCS:.cc=.o)
 TARGET = main
 

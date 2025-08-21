@@ -13,7 +13,7 @@
 #define num_set_bits(bitboard) __builtin_popcountll(bitboard)
 #define least_set_bit(bitboard) __builtin_ctzll(bitboard)
 
-enum piece {
+enum Piece {
     WHITE_PAWN = 1,
     WHITE_KNIGHT = 2,
     WHITE_BISHOP = 3,
@@ -28,7 +28,7 @@ enum piece {
     BLACK_KING = 12
 };
 
-enum piece_type {
+enum PieceType {
     PAWN = 0,
     KNIGHT = 1,
     BISHOP = 2,
@@ -37,9 +37,15 @@ enum piece_type {
     KING = 5
 };
 
-enum color {
+enum Color {
     WHITE = 0,
     BLACK = 1
+};
+
+enum MoveType {
+    TACTIC,
+    QUIET,
+    ALL
 };
 
 struct pair {
@@ -71,7 +77,7 @@ public:
     static uint64_t rook_masks[64];
     // precompute rook moves given square and board occupancy.
     // edges of the board can be excluded in occupancy because the rook must stop there.
-    // this gives 12 possible blockers per rook position. 2 ^ 12 = 4096.
+    // this gives max of 12 possible blockers per rook position. 2 ^ 12 = 4096.
     static uint64_t rook_moves[64][4096];
 
     // similar for bishops
@@ -84,9 +90,9 @@ public:
     // for hashing
     static Zobrist zobrist;
 
+    // precomputed moves for each square
+    static uint64_t pawn_attacks[64][2];
     static uint64_t knight_moves[64];
-    static uint64_t white_pawn_attacks[64];
-    static uint64_t black_pawn_attacks[64];
     static uint64_t king_moves[64];
 
     // for detecting threefold repetition - indexed by half moves
@@ -125,7 +131,7 @@ public:
     void init_piece_moves();
 
     Position();
-    Position(int board[8][8], color turn);
+    Position(int board[8][8], Color turn);
     
     static void print_bitboard(uint64_t bitboard);
     static int get_color(int piece);
@@ -144,7 +150,7 @@ public:
     uint64_t get_piece_moves(int row, int col);
     bool is_promotion(int start_row, int start_col, int end_row, int end_col);
 
-    std::vector<Move> get_pseudo_legal_moves();
+    std::vector<Move> get_pseudo_legal_moves(MoveType move_type = ALL);
     bool is_legal(const Move& move);
     std::vector<Move> get_legal_moves();
 

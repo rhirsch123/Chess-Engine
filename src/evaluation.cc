@@ -1,6 +1,9 @@
 #include "evaluation.hh"
 
 namespace Evaluation {
+    // indices for king danger table by side - will be updated in piece evaluation functions
+    int king_attack_units[2];
+
     // from perspective of white
     static uint64_t get_above_mask(int row) {
         return (1ULL << (row * 8)) - 1;
@@ -64,26 +67,18 @@ namespace Evaluation {
         attackers |= (position.piece_maps[BISHOP][color] | position.piece_maps[QUEEN][color]) & position.get_bishop_moves(square, blockers);
         attackers |= position.piece_maps[KNIGHT][color] & position.knight_moves[square];
         attackers |= position.piece_maps[KING][color] & position.king_moves[square];
-
-        if (color == WHITE) {
-            attackers |= position.piece_maps[PAWN][WHITE] & position.black_pawn_attacks[square];
-        } else {
-            attackers |= position.piece_maps[PAWN][BLACK] & position.white_pawn_attacks[square];
-        }
+        attackers |= position.piece_maps[PAWN][color] & position.pawn_attacks[square][!color];
 
         return attackers;
     }
 
-    // two uses: check if a move is safe, check if a certain piece could safely go to that square
-    bool safe_move(Position& position, Move move, int piece) {
-        bool valid_move = !piece;
-        if (valid_move) {
-            piece = position.board[move.start_row()][move.start_col()];
+    // static exchange evaluation
+    bool safe_move(Position& position, Move& move) {
+        if (move.exchange > 0) {
+            return true;
         }
-        if (!piece) {
-            return false;
-        }
-
+        
+        int piece = move.promote_to() ? move.promote_to() : position.board[move.start_row()][move.start_col()];
         char move_turn = Position::get_color(piece);
         int turn = !move_turn;
         int capture = position.board[move.end_row()][move.end_col()];
@@ -101,9 +96,7 @@ namespace Evaluation {
         int end_square = move.to();
         
         // update blockers with move
-        if (valid_move) {
-            blockers &= ~(1ULL << start_square);
-        }
+        blockers &= ~(1ULL << start_square);
         blockers |= (1ULL << end_square);
 
         uint64_t attackers = get_attackers(position, end_square, turn, blockers) & blockers;
@@ -243,6 +236,8 @@ namespace Evaluation {
         int knight_outpost = 0;
         int king_tropism = 0;
 
+        int king_square = least_set_bit(position.piece_maps[KING][!color]);
+
         uint64_t knights = position.piece_maps[KNIGHT][color];
         while (knights) {
             int square = least_set_bit(knights);
@@ -250,9 +245,13 @@ namespace Evaluation {
 
             int row = square / 8;
             int col = square % 8;
+
+            uint64_t moves = position.knight_moves[square];
+            king_attack_units[color] += num_set_bits(king_rings[king_square] & moves) * king_attack_weights[KNIGHT] +
+                                        num_set_bits(position.piece_maps[KING][!color] & moves) * check_weights[KNIGHT];
             
             uint64_t friendly_pieces = color == WHITE ? position.white_pieces : position.black_pieces;
-            uint64_t attacked_squares = position.knight_moves[square] & (~friendly_pieces) & (~opp_pawn_attacks);
+            uint64_t attacked_squares = moves & (~friendly_pieces) & (~opp_pawn_attacks);
             int mobility = num_set_bits(attacked_squares);
         
             if (mobility <= 2 && ((color == WHITE && row <= 3) || (color == BLACK && row >= 4))) {
@@ -261,7 +260,8 @@ namespace Evaluation {
                 while (attacked_squares) {
                     int attack = least_set_bit(attacked_squares);
                     attacked_squares &= attacked_squares - 1;
-                    if (safe_move(position, Move(square, attack))) {
+                    Move move = Move(square, attack);
+                    if (safe_move(position, move)) {
                         trapped = false;
                         break;
                     }
@@ -270,7 +270,7 @@ namespace Evaluation {
                     knight_mobility -= 200;
                 }
             }
-            knight_mobility += engine.knight_mobility_bonus[mobility];
+            knight_mobility += knight_mobility_bonus[mobility];
 
             // outpost: defended by a pawn, bonus if no pawns can attack it
             if (color == WHITE) {
@@ -283,7 +283,7 @@ namespace Evaluation {
                 }
 
                 // distance to black king
-                king_tropism -= manhattan_distance(square, position.king_positions[2] * 8 + position.king_positions[3]) * engine.near_opp_king_bonus[KNIGHT];
+                king_tropism -= manhattan_distance(square, position.king_positions[2] * 8 + position.king_positions[3]) * near_opp_king_bonus[KNIGHT];
             } else {
                 if (row - 1 >= 0 && ((col - 1 >= 0 && position.board[row - 1][col - 1] == BLACK_PAWN) ||
                    (col + 1 < 8 && position.board[row - 1][col + 1] == BLACK_PAWN))) {
@@ -294,12 +294,11 @@ namespace Evaluation {
                 }
 
                 // distance to white king
-                king_tropism -= manhattan_distance(square, position.king_positions[0] * 8 + position.king_positions[1]) * engine.near_opp_king_bonus[KNIGHT];
+                king_tropism -= manhattan_distance(square, position.king_positions[0] * 8 + position.king_positions[1]) * near_opp_king_bonus[KNIGHT];
             }
         }
 
-        return knight_mobility * engine.KNIGHT_MOBILITY_WEIGHT + knight_outpost * engine.KNIGHT_OUTPOST_WEIGHT +
-            king_tropism * engine.KING_TROPISM_WEIGHT;
+        return knight_mobility + knight_outpost * engine.KNIGHT_OUTPOST_WEIGHT + king_tropism;
     }
 
 
@@ -309,10 +308,12 @@ namespace Evaluation {
         int bishop_pawn_complex = 0;
         int king_tropism = 0;
 
+        int king_square = least_set_bit(position.piece_maps[KING][!color]);
+
         uint64_t bishops = position.piece_maps[BISHOP][color];
         // bishop pair
         if (num_set_bits(bishops) >= 2) {
-            bishop_pair += 1;
+            bishop_pair = 1;
         }
         while (bishops) {
             int square = least_set_bit(bishops);
@@ -321,8 +322,12 @@ namespace Evaluation {
             int row = square / 8;
             int col = square % 8;
 
+            uint64_t moves = position.get_bishop_moves(square, position.white_pieces | position.black_pieces);
+            king_attack_units[color] += num_set_bits(king_rings[king_square] & moves) * king_attack_weights[BISHOP] +
+                                        num_set_bits(position.piece_maps[KING][!color] & moves) * check_weights[BISHOP];
+
             uint64_t friendly_pieces = color == WHITE ? position.white_pieces : position.black_pieces;
-            uint64_t attacked_squares = position.get_bishop_moves(square, position.white_pieces | position.black_pieces) & (~friendly_pieces) & (~opp_pawn_attacks);
+            uint64_t attacked_squares = moves & (~friendly_pieces) & (~opp_pawn_attacks);
             int mobility = num_set_bits(attacked_squares);
 
             if (mobility <= 2 && ((color == WHITE && row <= 3) || (color == BLACK && row >= 4))) {
@@ -331,7 +336,8 @@ namespace Evaluation {
                 while (attacked_squares) {
                     int attack = least_set_bit(attacked_squares);
                     attacked_squares &= attacked_squares - 1;
-                    if (safe_move(position, Move(square, attack))) {
+                    Move move = Move(square, attack);
+                    if (safe_move(position, move)) {
                         trapped = false;
                         break;
                     }
@@ -340,7 +346,7 @@ namespace Evaluation {
                     bishop_mobility -= 200;
                 }
             }
-            bishop_mobility += engine.bishop_mobility_bonus[mobility];
+            bishop_mobility += bishop_mobility_bonus[mobility];
 
             // dark/light square pawn complex
             int num_light_pawns = num_set_bits(LIGHT_SQUARES & (position.piece_maps[PAWN][WHITE] | position.piece_maps[PAWN][BLACK]));
@@ -352,15 +358,11 @@ namespace Evaluation {
             }
 
             // distance to opp king
-            if (color == WHITE) {
-                king_tropism -= manhattan_distance(square, position.king_positions[2] * 8 + position.king_positions[3]) * engine.near_opp_king_bonus[BISHOP];
-            } else {
-                king_tropism -= manhattan_distance(square, position.king_positions[0] * 8 + position.king_positions[1]) * engine.near_opp_king_bonus[BISHOP];
-            }
+            king_tropism -= manhattan_distance(square, least_set_bit(position.piece_maps[KING][!color])) * near_opp_king_bonus[BISHOP];
         }
 
-        return bishop_pair * engine.BISHOP_PAIR_WEIGHT + bishop_mobility * engine.BISHOP_MOBILITY_WEIGHT +
-            bishop_pawn_complex * engine.BISHOP_PAWN_COMPLEX_WEIGHT + king_tropism * engine.KING_TROPISM_WEIGHT;
+        return bishop_pair * engine.BISHOP_PAIR_WEIGHT + bishop_mobility +
+            bishop_pawn_complex * engine.BISHOP_PAWN_COMPLEX_WEIGHT + king_tropism;
     }
 
 
@@ -368,6 +370,8 @@ namespace Evaluation {
         int rook_mobility = 0;
         int rook_behind_king = 0;
         int king_tropism = 0;
+
+        int king_square = least_set_bit(position.piece_maps[KING][!color]);
 
         uint64_t rooks = position.piece_maps[ROOK][color];
         while (rooks) {
@@ -377,8 +381,12 @@ namespace Evaluation {
             int row = square / 8;
             int col = square % 8;
 
+            uint64_t moves = position.get_rook_moves(square, position.white_pieces | position.black_pieces);
+            king_attack_units[color] += num_set_bits(king_rings[king_square] & moves) * king_attack_weights[ROOK] +
+                                        num_set_bits(position.piece_maps[KING][!color] & moves) * check_weights[ROOK];
+
             uint64_t friendly_pieces = color == WHITE ? position.white_pieces : position.black_pieces;
-            uint64_t attacked_squares = position.get_rook_moves(square, position.white_pieces | position.black_pieces) & (~friendly_pieces) & (~opp_pawn_attacks);
+            uint64_t attacked_squares = moves & (~friendly_pieces) & (~opp_pawn_attacks);
             int mobility = num_set_bits(attacked_squares);
                     
             if (mobility <= 2 && ((color == WHITE && row <= 3) || (color == BLACK && row >= 4))) {
@@ -387,7 +395,8 @@ namespace Evaluation {
                 while (attacked_squares) {
                     int attack = least_set_bit(attacked_squares);
                     attacked_squares &= attacked_squares - 1;
-                    if (safe_move(position, Move(square, attack))) {
+                    Move move = Move(square, attack);
+                    if (safe_move(position, move)) {
                         trapped = false;
                         break;
                     }
@@ -397,7 +406,7 @@ namespace Evaluation {
                 }
             }
             
-            rook_mobility += engine.rook_mobility_bonus[mobility];
+            rook_mobility += rook_mobility_bonus[mobility];
 
             // trapped by king
             int king_col = color == WHITE ? position.king_positions[1] : position.king_positions[3];
@@ -407,17 +416,11 @@ namespace Evaluation {
                 rook_behind_king -= 1;
             }
 
-            if (color == WHITE) {
-                // distance to black king
-                king_tropism -= manhattan_distance(square, position.king_positions[2] * 8 + position.king_positions[3]) * engine.near_opp_king_bonus[ROOK];
-            } else {
-                // distance to white king
-                king_tropism -= manhattan_distance(square, position.king_positions[0] * 8 + position.king_positions[1]) * engine.near_opp_king_bonus[ROOK];
-            }
+            // distance to opp king
+            king_tropism -= manhattan_distance(square, least_set_bit(position.piece_maps[KING][!color])) * near_opp_king_bonus[ROOK];
         }
 
-        return rook_mobility * engine.ROOK_MOBILITY_WEIGHT + rook_behind_king * engine.ROOK_BEHIND_KING_WEIGHT +
-            king_tropism * engine.KING_TROPISM_WEIGHT;
+        return rook_mobility + rook_behind_king * engine.ROOK_BEHIND_KING_WEIGHT + king_tropism;
     }
 
 
@@ -426,6 +429,8 @@ namespace Evaluation {
         int queen_mobility = 0;
         int queen_position = 0;
         int king_tropism = 0;
+
+        int king_square = least_set_bit(position.piece_maps[KING][!color]);
 
         if (position.half_moves < 15) {
             // don't bring queen out early
@@ -444,11 +449,14 @@ namespace Evaluation {
 
                 int row = square / 8;
                 int col = square % 8;
-                
+
                 uint64_t all_pieces = position.white_pieces | position.black_pieces;
+                uint64_t moves = (position.get_rook_moves(square, all_pieces) | position.get_bishop_moves(square, all_pieces));
+                king_attack_units[color] += num_set_bits(king_rings[king_square] & moves) * king_attack_weights[QUEEN] +
+                                            num_set_bits(position.piece_maps[KING][!color] & moves) * check_weights[QUEEN];
+                
                 uint64_t friendly_pieces = color == WHITE ? position.white_pieces : position.black_pieces;
-                uint64_t attacked_squares = (position.get_rook_moves(square, all_pieces) | 
-                                            position.get_bishop_moves(square, all_pieces)) & (~friendly_pieces) & (~opp_pawn_attacks);
+                uint64_t attacked_squares = moves & (~friendly_pieces) & (~opp_pawn_attacks);
                 int mobility = num_set_bits(attacked_squares);
 
                 if (mobility <= 2 && ((color == WHITE && row <= 3) || (color == BLACK && row >= 4))) {
@@ -457,7 +465,8 @@ namespace Evaluation {
                     while (attacked_squares) {
                         int attack = least_set_bit(attacked_squares);
                         attacked_squares &= attacked_squares - 1;
-                        if (safe_move(position, Move(square, attack))) {
+                        Move move = Move(square, attack);
+                        if (safe_move(position, move)) {
                             trapped = false;
                             break;
                         }
@@ -467,19 +476,14 @@ namespace Evaluation {
                     }
                 }
                 
-                queen_mobility += engine.queen_mobility_bonus[mobility];
+                queen_mobility += queen_mobility_bonus[mobility];
 
-                // distance to king
-                if (color == WHITE) {
-                    king_tropism -= manhattan_distance(square, position.king_positions[2] * 8 + position.king_positions[3]) * engine.near_opp_king_bonus[QUEEN];
-                } else {
-                    king_tropism -= manhattan_distance(square, position.king_positions[0] * 8 + position.king_positions[1]) * engine.near_opp_king_bonus[QUEEN];
-                }
+                // distance to opp king
+                king_tropism -= manhattan_distance(square, least_set_bit(position.piece_maps[KING][!color])) * near_opp_king_bonus[QUEEN];
             }
         }
 
-        return queen_out_early * engine.QUEEN_OUT_EARLY_WEIGHT + queen_mobility * engine.QUEEN_MOBILITY_WEIGHT +
-            king_tropism * engine.KING_TROPISM_WEIGHT;
+        return queen_out_early * engine.QUEEN_OUT_EARLY_WEIGHT + queen_mobility + king_tropism;
     }
 
 
@@ -504,20 +508,8 @@ namespace Evaluation {
             king_position += 2;
         }
 
-        // count attackers of squares arround the king
-        for (auto dir : position.directions.queen) {
-            int white_row = position.king_positions[0] + dir.first;
-            int white_col = position.king_positions[1] + dir.second;
-            if (white_row >= 0 && white_row < 8 && white_col >= 0 && white_col < 8) {
-                king_attackers -= num_set_bits(get_attackers(position, white_row * 8 + white_col, BLACK));
-            }
-
-            int black_row = position.king_positions[2] + dir.first;
-            int black_col = position.king_positions[3] + dir.second;
-            if (black_row >= 0 && black_row < 8 && black_col >= 0 && black_col < 8) {
-                king_attackers += num_set_bits(get_attackers(position, black_row * 8 + black_col, WHITE));
-            }
-        }
+        king_attackers = king_danger[std::min(49, king_attack_units[WHITE])] - 
+                         king_danger[std::min(49, king_attack_units[BLACK])];
 
         // open space around king is bad - count how many forward moves it would have if it were a queen
         uint64_t all_pieces = position.white_pieces | position.black_pieces;
@@ -574,21 +566,26 @@ namespace Evaluation {
             king_open_column += weight;
         }
 
-        return king_position * engine.KING_POSITION_WEIGHT + king_attackers * engine.KING_ATTACKERS_WEIGHT +
-            open_king * engine.OPEN_KING_WEIGHT + king_open_column * engine.KING_OPEN_COLUMN_WEIGHT;
+        return king_position * engine.KING_POSITION_WEIGHT + open_king * engine.OPEN_KING_WEIGHT +
+            king_open_column * engine.KING_OPEN_COLUMN_WEIGHT + king_attackers;
     }
 
 
     // heuristic evalution of position, given weight parameters from engine
     // linear combination of features with weights tuned through reinforcement learning
     int evaluation(Position& position, Engine& engine) {
+        engine.evaluated_positions++;
+
+        king_attack_units[WHITE] = 0;
+        king_attack_units[BLACK] = 0;
+
         int material = position.white_material - position.black_material;
         
         int major_material = position.white_material + position.black_material - 
             num_set_bits(position.piece_maps[PAWN][WHITE] | position.piece_maps[PAWN][BLACK]) * Position::values[PAWN];
 
         if (major_material > (Position::values[ROOK] * 4)) { // opening, middlegame
-            int eval = material * engine.MATERIAL_WEIGHT;
+            int eval = material;
 
             uint64_t white_pawn_attacks = get_pawn_attacks(position.piece_maps[PAWN][WHITE], WHITE);
             uint64_t black_pawn_attacks = get_pawn_attacks(position.piece_maps[PAWN][BLACK], BLACK);
@@ -610,28 +607,19 @@ namespace Evaluation {
 
             eval += evaluate_king_safety(position, engine);
 
-            // center control
-            int center_control = 0;
-            uint64_t all_pieces = position.white_pieces | position.black_pieces;
-            for (int row = 2; row <= 5; row++) {
-                for (int col = 2; col <= 5; col++) {
-                    int square = row * 8 + col;
-                    int white_attacks = num_set_bits(get_attackers(position, square, WHITE, all_pieces));
-                    int black_attacks = num_set_bits(get_attackers(position, square, BLACK, all_pieces));
-                    center_control += white_attacks - black_attacks;
-                }
-            }
-            if (position.half_moves <= 15) {
-                center_control *= 2;
-            }
-            eval += center_control * engine.CENTER_CONTROL_WEIGHT;
-
             // penalize certain "equal" trades - piece for three pawns, two minor pieces for rook and pawn, etc
             int white_piece_count = num_set_bits(position.white_pieces & ~position.piece_maps[PAWN][WHITE]);
             int black_piece_count = num_set_bits(position.black_pieces & ~position.piece_maps[PAWN][BLACK]);
             eval += (white_piece_count - black_piece_count) * engine.PIECE_DIFFERENCE_WEIGHT;
+
+            // bonus for being the side to move
+            if (position.turn == WHITE) {
+                eval += engine.TEMPO_WEIGHT;
+            } else {
+                eval -= engine.TEMPO_WEIGHT;
+            }
             
-            if (engine.playing == "white") {
+            if (position.turn == WHITE) {
                 return eval;
             } else {
                 return -eval;
@@ -665,7 +653,7 @@ namespace Evaluation {
                 if (major_material == (Position::values[BISHOP] * 2) &&
                 (((LIGHT_SQUARES & position.piece_maps[BISHOP][WHITE]) && (DARK_SQUARES & position.piece_maps[BISHOP][BLACK])) ||
                 ((LIGHT_SQUARES & position.piece_maps[BISHOP][BLACK]) && (DARK_SQUARES & position.piece_maps[BISHOP][WHITE])))) {
-                    drawness = 10;
+                    drawness = 5;
                 }
 
                 // todo: rook vs rook and minor piece
@@ -690,7 +678,7 @@ namespace Evaluation {
                     int square = least_set_bit(white_pawns);
                     white_pawns &= white_pawns - 1;
 
-                    white_pawn_attacks |= position.white_pawn_attacks[square];
+                    white_pawn_attacks |= position.pawn_attacks[square][WHITE];
 
                     int row = square / 8;
                     int col = square % 8;
@@ -755,7 +743,7 @@ namespace Evaluation {
                     int square = least_set_bit(black_pawns);
                     black_pawns &= black_pawns - 1;
 
-                    black_pawn_attacks |= position.black_pawn_attacks[square];
+                    black_pawn_attacks |= position.pawn_attacks[square][BLACK];
 
                     int row = square / 8;
                     int col = square % 8;
@@ -827,7 +815,7 @@ namespace Evaluation {
                     white_knights &= white_knights - 1;
 
                     uint64_t attacked_squares = position.knight_moves[square] & (~position.white_pieces) & (~black_pawn_attacks);
-                    knight_mobility += engine.knight_mobility_bonus[num_set_bits(attacked_squares)];
+                    knight_mobility += knight_mobility_bonus[num_set_bits(attacked_squares)];
                 }
                 uint64_t black_knights = position.piece_maps[KNIGHT][BLACK];
                 while (black_knights) {
@@ -835,7 +823,7 @@ namespace Evaluation {
                     black_knights &= black_knights - 1;
 
                     uint64_t attacked_squares = position.knight_moves[square] & (~position.black_pieces) & (~white_pawn_attacks);
-                    knight_mobility -= engine.knight_mobility_bonus[num_set_bits(attacked_squares)];
+                    knight_mobility -= knight_mobility_bonus[num_set_bits(attacked_squares)];
                 }
 
                 // bishop
@@ -848,7 +836,7 @@ namespace Evaluation {
                     white_bishops &= white_bishops - 1;
 
                     uint64_t attacked_squares = position.get_bishop_moves(square, all_pieces) & (~position.white_pieces);
-                    bishop_mobility += engine.bishop_mobility_bonus[num_set_bits(attacked_squares)];
+                    bishop_mobility += bishop_mobility_bonus[num_set_bits(attacked_squares)];
                 }
                 uint64_t black_bishops = position.piece_maps[BISHOP][BLACK];
                 if (num_set_bits(black_bishops) >= 2) {
@@ -859,7 +847,7 @@ namespace Evaluation {
                     black_bishops &= black_bishops - 1;
 
                     uint64_t attacked_squares = position.get_bishop_moves(square, all_pieces) & (~position.black_pieces);
-                    bishop_mobility -= engine.bishop_mobility_bonus[num_set_bits(attacked_squares)];
+                    bishop_mobility -= bishop_mobility_bonus[num_set_bits(attacked_squares)];
                 }
 
                 // rook
@@ -869,7 +857,7 @@ namespace Evaluation {
                     white_rooks &= white_rooks - 1;
 
                     uint64_t attacked_squares = position.get_rook_moves(square, all_pieces) & (~position.white_pieces) & (~black_pawn_attacks);
-                    rook_mobility += engine.rook_mobility_bonus[num_set_bits(attacked_squares)];
+                    rook_mobility += rook_mobility_bonus[num_set_bits(attacked_squares)];
                 }
                 uint64_t black_rooks = position.piece_maps[ROOK][BLACK];
                 while (black_rooks) {
@@ -877,7 +865,7 @@ namespace Evaluation {
                     black_rooks &= black_rooks - 1;
 
                     uint64_t attacked_squares = position.get_rook_moves(square, all_pieces) & (~position.black_pieces) & (~white_pawn_attacks);
-                    rook_mobility -= engine.rook_mobility_bonus[num_set_bits(attacked_squares)];
+                    rook_mobility -= rook_mobility_bonus[num_set_bits(attacked_squares)];
                 }
 
                 // queen
@@ -888,7 +876,7 @@ namespace Evaluation {
 
                     uint64_t attacked_squares = (position.get_rook_moves(square, all_pieces) | 
                                                 position.get_bishop_moves(square, all_pieces)) & (~position.white_pieces) & (~black_pawn_attacks);
-                    queen_mobility += engine.queen_mobility_bonus[num_set_bits(attacked_squares)];
+                    queen_mobility += queen_mobility_bonus[num_set_bits(attacked_squares)];
                 }
                 uint64_t black_queen = position.piece_maps[QUEEN][BLACK];
                 while (black_queen) {
@@ -897,7 +885,7 @@ namespace Evaluation {
 
                     uint64_t attacked_squares = (position.get_rook_moves(square, all_pieces) | 
                                                 position.get_bishop_moves(square, all_pieces)) & (~position.black_pieces) & (~white_pawn_attacks);
-                    queen_mobility -= engine.queen_mobility_bonus[num_set_bits(attacked_squares)];
+                    queen_mobility -= queen_mobility_bonus[num_set_bits(attacked_squares)];
                 }
 
                 int white_piece_count = num_set_bits(position.white_pieces & ~position.piece_maps[PAWN][WHITE]);
@@ -905,16 +893,15 @@ namespace Evaluation {
                 piece_difference = white_piece_count - black_piece_count;
 
 
-                int eval = material * engine.MATERIAL_WEIGHT + isolated_pawn * engine.ISOLATED_PAWN_WEIGHT +
-                    doubled_pawn * engine.DOUBLED_PAWN_WEIGHT + backwards_pawn * engine.BACKWARDS_PAWN_WEIGHT +
-                    passed_pawn * engine.PASSED_PAWN_WEIGHT + knight_mobility * engine.KNIGHT_MOBILITY_WEIGHT +
-                    bishop_pair * engine.BISHOP_PAIR_WEIGHT + bishop_mobility * engine.BISHOP_MOBILITY_WEIGHT +
-                    rook_mobility * engine.ROOK_MOBILITY_WEIGHT + queen_mobility * engine.QUEEN_MOBILITY_WEIGHT +
-                    king_position * engine.KING_POSITION_WEIGHT + piece_difference * engine.PIECE_DIFFERENCE_WEIGHT;
+                int eval = material + knight_mobility + bishop_mobility + rook_mobility + queen_mobility +
+                    isolated_pawn * engine.ISOLATED_PAWN_WEIGHT + doubled_pawn * engine.DOUBLED_PAWN_WEIGHT +
+                    backwards_pawn * engine.BACKWARDS_PAWN_WEIGHT + passed_pawn * engine.PASSED_PAWN_WEIGHT +
+                    bishop_pair * engine.BISHOP_PAIR_WEIGHT + king_position * engine.KING_POSITION_WEIGHT +
+                    piece_difference * engine.PIECE_DIFFERENCE_WEIGHT;
                 
                 eval /= drawness + 1;
                 
-                if (engine.playing == "white") {
+                if (position.turn == WHITE) {
                     return eval;
                 } else {
                     return -eval;
@@ -929,13 +916,13 @@ namespace Evaluation {
                 (position.black_material == Position::values[KNIGHT] || position.black_material == Position::values[BISHOP]) &&
                     !position.piece_maps[PAWN][BLACK]) {
 
-                    drawness = 100;
+                    drawness = 20;
                 }
                 if (position.black_material == Position::values[ROOK] && position.piece_maps[ROOK][BLACK] &&
                 (position.white_material == Position::values[KNIGHT] || position.white_material == Position::values[BISHOP]) &&
                     !position.piece_maps[PAWN][WHITE]) {
 
-                    drawness = 100;
+                    drawness = 20;
                 }
 
                 // todo: bishop and one pawn in wrong corner
@@ -945,7 +932,8 @@ namespace Evaluation {
 
                 int king_position = 0;
 
-                if (engine.playing == "white") {
+                //if (engine.playing == "white") {
+                if (position.turn == WHITE) {
                     if (position.white_material > position.black_material) {
                         // force king to corner
                         if (position.king_positions[2] <= 3) {
@@ -969,33 +957,32 @@ namespace Evaluation {
                     if (position.black_material > position.white_material) {
                         // force king to corner
                         if (position.king_positions[0] <= 3) {
-                            king_position -= position.king_positions[0];
+                            king_position += position.king_positions[0];
                         } else {
-                            king_position -= 7 - position.king_positions[0];
+                            king_position += 7 - position.king_positions[0];
                         }
                         if (position.king_positions[1] <= 3) {
-                            king_position -= position.king_positions[1];
+                            king_position += position.king_positions[1];
                         } else {
-                            king_position -= 7 - position.king_positions[1];
+                            king_position += 7 - position.king_positions[1];
                         }
 
                         // bring king closer to opp king
-                        king_position -= std::abs(position.king_positions[0] - position.king_positions[2]) +
+                        king_position += std::abs(position.king_positions[0] - position.king_positions[2]) +
                                         std::abs(position.king_positions[1] - position.king_positions[3]);
                     } else {
 
                     }
                 }
 
-                float eval;
-                if (engine.playing == "white") {
-                    eval = material * engine.MATERIAL_WEIGHT + king_position * engine.KING_POSITION_WEIGHT;
-                } else {
-                    eval = -material * engine.MATERIAL_WEIGHT + king_position * engine.KING_POSITION_WEIGHT;
-                }
-
+                int eval = material + king_position * engine.KING_POSITION_WEIGHT;
                 eval /= drawness + 1;
-                return eval;
+                
+                if (position.turn == WHITE) {
+                    return eval;
+                } else {
+                    return -eval;
+                }
             }
         }
     }

@@ -22,10 +22,9 @@ struct tt_entry {
 class TranspositionTable {
     std::vector<tt_entry> table;
     size_t size;
-    bool always_replace;
 
 public:
-    TranspositionTable(size_t megabytes, bool always_replace) : always_replace(always_replace) {
+    TranspositionTable(size_t megabytes) {
         size_t bytes = megabytes * 1024 * 1024;
         size = bytes / sizeof(tt_entry);
         table.resize(size);
@@ -35,14 +34,9 @@ public:
         size_t index = entry.key % size;
         tt_entry& current = table[index];
 
-        if (always_replace) {
-            if (current.key != entry.key || entry.depth >= current.depth || (entry.type == EXACT && current.type != EXACT)) {
-                current = entry;
-            }
-        } else {
-            if (!current.key || entry.depth >= current.depth) {
-                current = entry;
-            }
+        // always replace
+        if (current.key != entry.key || entry.depth >= current.depth || (entry.type == EXACT && current.type != EXACT)) {
+            current = entry;
         }
     }
 

@@ -58,8 +58,21 @@ void write_to_pipe(std::string message) {
 int main() {
     std::string playing = "white";
 
+    /* int init_board[8][8] = {
+        {BLACK_ROOK, 0, 0, 0, BLACK_ROOK, 0, BLACK_KING, 0},
+        {BLACK_PAWN, BLACK_PAWN, 0, 0, 0, BLACK_PAWN, BLACK_BISHOP, BLACK_PAWN},
+        {0, BLACK_QUEEN, BLACK_PAWN, 0, 0, 0, BLACK_PAWN, 0},
+        {0, 0, WHITE_BISHOP, 0, 0, 0, 0, 0},
+        {0, 0, WHITE_BISHOP, WHITE_PAWN, 0, 0, BLACK_BISHOP, 0},
+        {WHITE_QUEEN, 0, BLACK_KNIGHT, 0, 0, WHITE_KNIGHT, 0, 0},
+        {WHITE_PAWN, 0, 0, 0, 0, WHITE_PAWN, WHITE_PAWN, WHITE_PAWN},
+        {0, 0, 0, WHITE_ROOK, 0, WHITE_KING, 0, WHITE_ROOK}
+    }; 
+    Position position(init_board, BLACK); */
+   
     Position position;
-    Engine engine(3000);
+    Engine engine(3000, true);
+    
     
     int pid = fork();
     if (pid < 0) {
@@ -92,6 +105,12 @@ int main() {
         } else if (command == "get playing") {
             write_to_pipe(playing);
             
+        } else if (command == "get time") {
+            if (engine.timed_game) {
+                write_to_pipe(std::to_string(engine.minutes) + '\n' + std::to_string(engine.increment));
+            } else {
+                write_to_pipe("0\n0\n");
+            }
         } else if (command == "get legal moves") {
             std::ostringstream buffer;
             for (auto move : position.get_legal_moves()) {

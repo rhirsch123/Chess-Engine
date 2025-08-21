@@ -238,23 +238,8 @@ namespace Polyglot {
         if (position.can_castle[3]) hash ^= castle_table[2];
         if (position.can_castle[2]) hash ^= castle_table[3];
 
-        bool en_passant_possible = false;
-        int ep_col = position.en_passant_col;
-        if (ep_col != -1) {
-            if (position.turn == WHITE) {
-                if ((ep_col - 1 >= 0 && position.board[3][ep_col - 1] == WHITE_PAWN) ||
-                    (ep_col + 1 < 8 && position.board[3][ep_col + 1] == WHITE_PAWN)) {
-                    en_passant_possible = true;
-                }
-            } else {
-                if ((ep_col - 1 >= 0 && position.board[4][ep_col - 1] == BLACK_PAWN) ||
-                    (ep_col + 1 < 8 && position.board[4][ep_col + 1] == BLACK_PAWN)) {
-                    en_passant_possible = true;
-                }
-            }
-        }
-        if (en_passant_possible) {
-            hash ^= en_passant_table[ep_col];
+        if (position.en_passant_col != -1) {
+            hash ^= en_passant_table[position.en_passant_col];
         }
 
         if (position.turn == WHITE) hash ^= turn_key;

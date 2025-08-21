@@ -13,8 +13,7 @@ struct directions Position::directions = {
 Zobrist Position::zobrist;
 
 uint64_t Position::knight_moves[64];
-uint64_t Position::white_pawn_attacks[64];
-uint64_t Position::black_pawn_attacks[64];
+uint64_t Position::pawn_attacks[64][2];
 uint64_t Position::king_moves[64];
 
 uint64_t Position::rook_masks[64];
@@ -35,10 +34,11 @@ extern uint64_t bishop_magic_numbers[64];
 
 
 void Position::init_piece_moves() {
-    // knight moves
     for (int square = 0; square < 64; square++) {
         int row = square / 8;
         int col = square % 8;
+
+        // knight moves
         uint64_t moves = 0ULL;
         for (auto d : directions.knight) {
             int new_row = row + d.first;
@@ -48,13 +48,8 @@ void Position::init_piece_moves() {
             }
         }
         knight_moves[square] = moves;
-    }
-
-    // pawn attacks
-    for (int square = 0; square < 64; square++) {
-        int row = square / 8;
-        int col = square % 8;
-
+        
+        // pawn attacks
         uint64_t white_attacks = 0ULL;
         uint64_t black_attacks = 0ULL;
         if (col > 0) {
@@ -73,15 +68,11 @@ void Position::init_piece_moves() {
                 black_attacks |= (1ULL << ((row + 1) * 8 + (col + 1)));
             }
         }
-        white_pawn_attacks[square] = white_attacks;
-        black_pawn_attacks[square] = black_attacks;
-    }
+        pawn_attacks[square][WHITE] = white_attacks;
+        pawn_attacks[square][BLACK] = black_attacks;
 
-    // king moves
-    for (int square = 0; square < 64; square++) {
-        int row = square / 8;
-        int col = square % 8;
-        uint64_t moves = 0ULL;
+        // king moves
+        moves = 0ULL;
         for (auto d : directions.queen) {
             int new_row = row + d.first;
             int new_col = col + d.second;
@@ -90,26 +81,18 @@ void Position::init_piece_moves() {
             }
         }
         king_moves[square] = moves;
-    }
 
-    // rook moves
-    for (int square = 0; square < 64; square++) {
+        // rook moves
         rook_masks[square] = get_rook_mask(square);
-
         std::vector<uint64_t> occupancies = get_all_occupancies(rook_masks[square]);
-
         for (uint64_t occ : occupancies) {
             uint64_t index = (occ * rook_magic_numbers[square]) >> (64 - 12);
             rook_moves[square][index] = get_rook_attacks(square, occ);
         }
-    }
 
-    // bishop moves
-    for (int square = 0; square < 64; square++) {
+        // bishop moves
         bishop_masks[square] = get_bishop_mask(square);
-
-        std::vector<uint64_t> occupancies = get_all_occupancies(bishop_masks[square]);
-
+        occupancies = get_all_occupancies(bishop_masks[square]);
         for (uint64_t occ : occupancies) {
             uint64_t index = (occ * bishop_magic_numbers[square]) >> (64 - 9);
             bishop_moves[square][index] = get_bishop_attacks(square, occ);
@@ -182,7 +165,7 @@ Position::Position()
 }
 
 // set up custom position
-Position::Position(int init_board[8][8], color turn)
+Position::Position(int init_board[8][8], Color turn)
 : turn(turn), en_passant_col(-1), fifty_move_count(0), half_moves(0), repetitions(1) {
     white_material = 0;
     black_material = 0;
@@ -339,7 +322,7 @@ bool Position::in_check(int king_row, int king_col) {
         return true;
     }
 
-    uint64_t pawn_mask = turn == WHITE ? white_pawn_attacks[king_square] : black_pawn_attacks[king_square];
+    uint64_t pawn_mask = pawn_attacks[king_square][turn];
     if (pawn_mask & piece_maps[PAWN][!turn]) {
         return true;
     }
@@ -385,7 +368,7 @@ uint64_t Position::get_pawn_pushes(int row, int col) {
     uint64_t pushes = 0ULL;
     int direction = (turn == WHITE) ? -1 : 1;
     // one square forward
-    if (row + direction >= 0 && row + direction < 8 && !board[row + direction][col]) {
+    if (!board[row + direction][col]) {
         pushes |= (1ULL << ((row + direction) * 8 + col));
     }
     // two squares forward
@@ -427,13 +410,7 @@ uint64_t Position::get_piece_moves(int row, int col) {
 
     int piece_type = get_piece_type(piece);
     if (piece_type == PAWN) {
-        uint64_t captures;
-        if (turn == WHITE) {
-            captures = white_pawn_attacks[square] & (all_pieces & (~friendly_pieces));
-        } else {
-            captures = black_pawn_attacks[square] & (all_pieces & (~friendly_pieces));
-        }
-
+        uint64_t captures = pawn_attacks[square][turn] & (all_pieces & (~friendly_pieces));
         return captures | get_pawn_pushes(row, col) | get_en_passant(row, col);
     }
     if (piece_type == QUEEN) {
@@ -462,24 +439,37 @@ bool Position::is_promotion(int start_row, int start_col, int end_row, int end_c
 
 
 // moves that would be/are legal not considering if they leave the king in check
-std::vector<Move> Position::get_pseudo_legal_moves() {
+std::vector<Move> Position::get_pseudo_legal_moves(MoveType move_type) {
     std::vector<Move> moves;
     moves.reserve(128);
 
-    uint64_t all_pieces = white_pieces | black_pieces;
-    while (all_pieces) {
-        int from_square = least_set_bit(all_pieces);
-        all_pieces &= all_pieces - 1;
+    uint64_t pieces = turn == WHITE ? white_pieces : black_pieces;
+    while (pieces) {
+        int from_square = least_set_bit(pieces);
+        pieces &= pieces - 1;
 
         int row = from_square / 8;
         int col = from_square % 8;
 
         int piece = board[row][col];
-        if (!piece || turn != get_color(piece)) {
-            continue;
-        }
 
         uint64_t move_map = get_piece_moves(row, col);
+        if (move_type == TACTIC || move_type == QUIET) {
+            uint64_t tactics = (turn == WHITE ? black_pieces : white_pieces) | get_en_passant(row, col);
+            if (piece == WHITE_PAWN) {
+                // 8th rank
+                tactics |= 0xff;
+            } else if (piece == BLACK_PAWN) {
+                // 1st rank
+                tactics |= 0xff00000000000000;
+            }
+            
+            if (move_type == TACTIC) {
+                move_map &= tactics;
+            } else {
+                move_map &= ~tactics;
+            }
+        }
         
         while (move_map) {
             // finds least significant set bit position
@@ -497,9 +487,9 @@ std::vector<Move> Position::get_pseudo_legal_moves() {
             } else {
                 int capture = board[to_row][to_col];
                 // mvv-lva
-                int priority = capture ? values[get_piece_type(capture)] - values[get_piece_type(piece)] + 1 : 0;
+                int exchange = capture ? values[get_piece_type(capture)] - values[get_piece_type(piece)] + 1 : 0;
 
-                moves.emplace_back(from_square, to_square, 0, priority);
+                moves.emplace_back(from_square, to_square, 0, exchange);
             }
         }
     }
@@ -625,7 +615,7 @@ std::vector<Move> Position::get_legal_moves() {
 
 
 void Position::make_move(const Move& move) {
-    bool null_move = (hash_value == 0ULL);
+    bool null_descendant = (hash_value == 0ULL);
 
     int start_square = move.from();
     int end_square = move.to();
@@ -826,7 +816,21 @@ void Position::make_move(const Move& move) {
     if (en_passant_col != -1) {
         hash_value ^= zobrist.en_passant_table[en_passant_col];
     }
+    bool en_passant_possible = false;
     if (piece_type == PAWN && std::abs(start_row - end_row) > 1) {
+        if (turn == BLACK) {
+            if ((start_col - 1 >= 0 && board[3][start_col - 1] == WHITE_PAWN) ||
+                (start_col + 1 < 8 && board[3][start_col + 1] == WHITE_PAWN)) {
+                en_passant_possible = true;
+            }
+        } else {
+            if ((start_col - 1 >= 0 && board[4][start_col - 1] == BLACK_PAWN) ||
+                (start_col + 1 < 8 && board[4][start_col + 1] == BLACK_PAWN)) {
+                en_passant_possible = true;
+            }
+        }
+    }
+    if (en_passant_possible) {
         en_passant_col = start_col;
         hash_value ^= zobrist.en_passant_table[en_passant_col];
     } else {
@@ -843,7 +847,7 @@ void Position::make_move(const Move& move) {
     hash_value ^= zobrist.turn_key;
 
     // threefold repetition
-    if (!null_move) {
+    if (!null_descendant) {
         position_history[half_moves] = hash_value;
         if (repetitions < 3) {
             repetitions = 1;

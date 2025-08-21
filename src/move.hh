@@ -7,16 +7,16 @@
 // 4 bits for promotion (enum piece_type), 6 bits for from_square, 6 bits for to_square
 class Move {
 public:
-    int priority;
+    int exchange;
     uint16_t move;
 
-    Move() : move(0), priority(0) {}
+    Move() : move(0), exchange(0) {}
     
-    Move(uint8_t from_square, uint8_t to_square, uint8_t promote_to = 0, int priority = 0) : priority(priority) {
+    Move(uint8_t from_square, uint8_t to_square, uint8_t promote_to = 0, int exchange = 0) : exchange(exchange) {
         move = (promote_to << 12) | (from_square << 6) | to_square;
     }
 
-    Move(uint16_t move_data) : move(move_data), priority(0) {}
+    Move(uint16_t move_data) : move(move_data), exchange(0) {}
 
     int from() const {
         return (move >> 6) & 0x3F;
@@ -66,6 +66,14 @@ public:
 
     bool operator==(const Move& other) const {
         return move == other.move;
+    }
+
+    bool operator!=(const Move& other) const {
+        return move != other.move;
+    }
+
+    explicit operator bool() const {
+        return move;
     }
 };
 
