@@ -152,9 +152,9 @@ loss = 0.5 * (a2 - y)^2
 
 d_loss / d_a2 = a2 - y
 d_loss / d_out = (d_loss / d_a2) * (d_a2 / d_sigmoid) = (a2 - y) * (a2 * (1 - a2)) -> dL_dO
-d_loss / w2 = (d_loss / d_out) * (d_out / d_w2) = dL_dO * a1
-d_loss / b2 = (d_loss / d_out) * (d_out / d_b2) = dL_dO * 1 = dL_dO
-d_loss / a1 = (d_loss / d_out) * (d_out / d_a1) = dL_dO * w2
+d_loss / d_w2 = (d_loss / d_out) * (d_out / d_w2) = dL_dO * a1
+d_loss / d_b2 = (d_loss / d_out) * (d_out / d_b2) = dL_dO * 1 = dL_dO
+d_loss / d_a1 = (d_loss / d_out) * (d_out / d_a1) = dL_dO * w2
 d_loss / d_h = (d_loss / d_a1) * (d_a1 / d_h) = dL_dO * w2 * (h[i] between 0, 1 ? 1 : 0) -> dL_dH
 d_loss / d_w1 = (d_loss / d_h) * (d_h / d_w1) = dL_dH * x
 d_loss / d_b1 = (d_loss / d_h) * (d_h / d_b1) = dL_dH * 1 = dL_dH
