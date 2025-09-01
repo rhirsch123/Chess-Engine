@@ -14,8 +14,15 @@ Engine::Engine(double minutes, double increment, bool use_book)
 }
 
 
+static inline int evaluation(Position& position) {
+    int eval = position.eval[position.half_moves];
+    return position.turn == WHITE ? eval : -eval;
+}
+
 // shorter search at the end of negamax to only evaluate quiet positions
 int Engine::quiescense(Position& position, int alpha, int beta, int current_depth) {
+    quiescense_nodes++;
+
     std::string terminal_state = position.get_terminal_state();
     if (!terminal_state.empty()) {
         if (terminal_state == "white win") {
@@ -27,7 +34,7 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
         }
     }
 
-    int static_eval = Evaluation::evaluation(position, *this);
+    int static_eval = evaluation(position);
     alpha = std::max(alpha, static_eval);
 
     if (alpha >= beta) {
@@ -79,14 +86,14 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
 // negamax search with alpha beta pruning
 int Engine::negamax(Position& position, int remaining_depth, int current_depth, int alpha, int beta,
                     std::chrono::time_point<std::chrono::high_resolution_clock> start_time) {
-    if (move_found && total_nodes % 16 == 0) {
+    if (move_found && negamax_nodes % 16 == 0) {
         auto now = std::chrono::high_resolution_clock::now();
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count() >= time_per_move) {
             return INF + 1;
         }
     }
 
-    total_nodes++;
+    negamax_nodes++;
 
     bool root_node = current_depth == 0;
     bool pv_node = beta > alpha + 1;
@@ -113,13 +120,13 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
             int val = entry.value;
 
-            if (entry.type == EXACT) {
+            if (entry.type == EXACT && !pv_node) {
                 if (root_node) {
                     best_move = Move(entry.best_move);
                 }
                 return val;
             } else if (entry.type == UPPER_BOUND) {
-                if (val <= alpha) {
+                if (val <= alpha && !pv_node) {
                     if (root_node) {
                         best_move = Move(entry.best_move);
                     }
@@ -127,7 +134,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
                 }
                 beta = std::min(beta, val);
             } else if (entry.type == LOWER_BOUND) {
-                if (val >= beta) {
+                if (val >= beta && !pv_node) {
                     if (root_node) {
                         best_move = Move(entry.best_move);
                     }
@@ -148,10 +155,8 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         major_material > Position::values[ROOK] && position.hash_value &&
         (!transposition_found || entry.type == LOWER_BOUND || entry.value >= beta);
     
-    int static_eval = INF + 1;
-    if (do_null_prune) {
-        static_eval = Evaluation::evaluation(position, *this);
-    }
+    int static_eval = evaluation(position);
+    
     if (do_null_prune && static_eval >= beta) {
         uint64_t hash = position.hash_value;
         int en_passant_col = position.en_passant_col;
@@ -229,11 +234,14 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             break;
         }
 
-        if (futility_prune && movegen.stage == QUIETS && local_max >= -INF) {
-            if (static_eval > INF) {
-                static_eval = Evaluation::evaluation(position, *this);
-            }
+        // already tried hash move
+        if (move == hash_move) {
+            continue;
+        }
+        num_moves++;
 
+        // futility prune
+        if (futility_prune && movegen.stage == QUIETS && local_max >= -INF) {
             if (static_eval + 100 + 150 * remaining_depth <= alpha) {
                 if (remaining_depth <= 3) {
                     break;
@@ -242,11 +250,6 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
                 continue;
             }
         }
-
-        if (move == hash_move || !position.is_legal(move)) {
-            continue;
-        }
-        num_moves++;
 
         // late move reduction: assumes decent move ordering, reduce search depth of late ordered moves
         int R = 0;
@@ -388,8 +391,8 @@ int Engine::aspiration_window(Position& position, int remaining_depth, int estim
 Move Engine::get_move(Position& position, bool verbose) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    total_nodes = 0;
-    evaluated_positions = 0;
+    negamax_nodes = 0;
+    quiescense_nodes = 0;
 
     if (use_book && position.half_moves < 10) {
         // Flavio Martin's opening book
@@ -441,8 +444,8 @@ Move Engine::get_move(Position& position, bool verbose) {
         printf("time: %f\n", time_taken / 1000);
         printf("depth: %d\n", depth - 1);
         printf("evaluation: %d\n", position.turn == WHITE ? eval : -eval);
-        printf("total nodes: %d\n", total_nodes);
-        printf("evaluated positions: %d\n\n", evaluated_positions);
+        printf("negamax nodes: %d\n", negamax_nodes);
+        printf("quiescense nodes: %d\n\n", quiescense_nodes);
     }
 
     if (timed_game) {
@@ -454,4 +457,25 @@ Move Engine::get_move(Position& position, bool verbose) {
     }
 
     return best_move;
+}
+
+
+void Engine::reset() {
+    for (int i = 0; i < 64; i++) {
+        for (int j = 0; j < 64; j++) {
+            quiet_history[i][j] = 0;
+        }
+    }
+    for (int i = 0; i < 64; i++) {
+        for (int j = 0; j < 6; j++) {
+            for (int k = 0; k < 5; k++) {
+                capture_history[i][j][k] = 0;
+            }
+        }
+    }
+    for (int i = 0; i < MAX_DEPTH; i++) {
+        killers[i][0] = Move();
+        killers[i][1] = Move();
+    }
+    transposition_table.clear();
 }

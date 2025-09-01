@@ -1,5 +1,5 @@
 #include "position.hh"
-
+#include "nnue/nnue.hh"
 
 int Position::values[6] = { 100, 300, 300, 500, 900, 2000 };
 
@@ -101,7 +101,7 @@ void Position::init_piece_moves() {
 }
 
 // initialize starting position
-Position::Position()
+Position::Position(std::string nnue)
 : turn(WHITE), en_passant_col(-1), fifty_move_count(0), half_moves(0), repetitions(1) {
     int start_material = values[QUEEN] + values[ROOK] * 2 + values[BISHOP] * 2 +
         values[KNIGHT] * 2 + values[PAWN] * 8;
@@ -162,10 +162,13 @@ Position::Position()
         piece_maps[BISHOP][WHITE] | piece_maps[KNIGHT][WHITE] | piece_maps[PAWN][WHITE];
     black_pieces = piece_maps[KING][BLACK] | piece_maps[QUEEN][BLACK] | piece_maps[ROOK][BLACK] |
         piece_maps[BISHOP][BLACK] | piece_maps[KNIGHT][BLACK] | piece_maps[PAWN][BLACK];
+    
+    NNUE::init(nnue);
+    eval[0] = NNUE::evaluate(*this);
 }
 
 // set up custom position
-Position::Position(int init_board[8][8], Color turn)
+Position::Position(int init_board[8][8], Color turn, std::string nnue)
 : turn(turn), en_passant_col(-1), fifty_move_count(0), half_moves(0), repetitions(1) {
     white_material = 0;
     black_material = 0;
@@ -245,6 +248,126 @@ Position::Position(int init_board[8][8], Color turn)
         piece_maps[BISHOP][WHITE] | piece_maps[KNIGHT][WHITE] | piece_maps[PAWN][WHITE];
     black_pieces = piece_maps[KING][BLACK] | piece_maps[QUEEN][BLACK] | piece_maps[ROOK][BLACK] |
         piece_maps[BISHOP][BLACK] | piece_maps[KNIGHT][BLACK] | piece_maps[PAWN][BLACK];
+    
+    NNUE::init(nnue);
+    eval[0] = NNUE::evaluate(*this);
+}
+
+
+Position::Position(std::string fen, std::string nnue)
+: fifty_move_count(0), repetitions(1) {
+    std::istringstream fen_stream(fen);
+	std::string fen_board, fen_turn, fen_castling, fen_ep;
+	int full_moves;
+
+	fen_stream >> fen_board >> fen_turn >> fen_castling >> fen_ep >> half_moves >> full_moves;
+
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            board[i][j] = 0;
+        }
+    }
+    for (int i = 0; i < 4; i++) {
+        can_castle[i] = false;
+    }
+    for (int i = PAWN; i <= KING; i++) {
+        piece_maps[i][WHITE] = 0ULL;
+        piece_maps[i][BLACK] = 0ULL;
+    }
+
+	int index = 0;
+	for (char c : fen_board) {
+		if (c == '/') {
+			continue;
+		} else if (isdigit(c)) {
+			index += c - '0';
+		} else {
+            int piece;
+            if (c == 'P') {
+                piece = WHITE_PAWN;
+            } else if (c == 'N') {
+                piece = WHITE_KNIGHT;
+            } else if (c == 'B') {
+                piece = WHITE_BISHOP;
+            } else if (c == 'R') {
+                piece = WHITE_ROOK;
+            } else if (c == 'Q') {
+                piece = WHITE_QUEEN;
+            } else if (c == 'K') {
+                piece = WHITE_KING;
+            } else if (c == 'p') {
+                piece = BLACK_PAWN;
+            } else if (c == 'n') {
+                piece = BLACK_KNIGHT;
+            } else if (c == 'b') {
+                piece = BLACK_BISHOP;
+            } else if (c == 'r') {
+                piece = BLACK_ROOK;
+            } else if (c == 'q') {
+                piece = BLACK_QUEEN;
+            } else if (c == 'k') {
+                piece = BLACK_KING;
+            }
+			board[index / 8][index % 8] = piece;
+            index++;
+		}
+	}
+
+	turn = (fen_turn == "w") ? WHITE : BLACK;
+
+	for (char c : fen_castling) {
+		if (c == 'K') can_castle[1] = true;
+		else if (c == 'Q') can_castle[0] = true;
+		else if (c == 'k') can_castle[3] = true;
+		else if (c == 'q') can_castle[2] = true;
+	}
+
+	if (fen_ep != "-" && fen_ep != "–") {
+        en_passant_col = fen_ep[0] - 'a';
+	} else {
+		en_passant_col = -1;
+	}
+
+    white_material = 0;
+    black_material = 0;
+
+    for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+            int piece = board[row][col];
+            if (!piece) {
+                continue;
+            }
+            int piece_type = get_piece_type(piece);
+            int color = get_color(piece);
+            
+            if (piece == WHITE_KING) {
+                king_positions[0] = row;
+                king_positions[1] = col;
+            } else if (piece == BLACK_KING) {
+                king_positions[2] = row;
+                king_positions[3] = col;
+            } else if (color == WHITE) {
+                white_material += values[piece_type];
+            } else {
+                black_material += values[piece_type];
+            }
+
+            piece_maps[piece_type][color] |= 1ULL << (row * 8 + col);
+        }
+    }
+
+    hash_value = zobrist.hash_position(board, turn, can_castle, en_passant_col);
+    position_history[0] = hash_value;
+
+    init_piece_moves();
+
+    white_pieces = piece_maps[KING][WHITE] | piece_maps[QUEEN][WHITE] | piece_maps[ROOK][WHITE] |
+        piece_maps[BISHOP][WHITE] | piece_maps[KNIGHT][WHITE] | piece_maps[PAWN][WHITE];
+    black_pieces = piece_maps[KING][BLACK] | piece_maps[QUEEN][BLACK] | piece_maps[ROOK][BLACK] |
+        piece_maps[BISHOP][BLACK] | piece_maps[KNIGHT][BLACK] | piece_maps[PAWN][BLACK];
+    
+    NNUE::init(nnue);
+    eval[0] = NNUE::evaluate(*this);
 }
 
 
@@ -634,6 +757,8 @@ void Position::make_move(const Move& move) {
         prev_castle[i] = can_castle[i];
     }
     struct move_info m = {
+        {NULL, NULL, NULL},
+        0,
         hash_value,
         move,
         en_passant_col,
@@ -643,10 +768,17 @@ void Position::make_move(const Move& move) {
         repetitions,
         {prev_castle[0], prev_castle[1], prev_castle[2], prev_castle[3]}
     };
-    move_stack.push(m);
 
     board[start_row][start_col] = 0;
     hash_value ^= zobrist.piece_table[piece - 1][start_square];
+
+    // nnue
+    int num_dirty = 1;
+    dirty_piece dps[3];
+    dps[0].piece = piece;
+    dps[0].from = start_square;
+    dps[0].to = end_square;
+
 
     // update piece maps
     if (piece_type != KING) {
@@ -684,6 +816,11 @@ void Position::make_move(const Move& move) {
                 hash_value ^= zobrist.castle_table[3];
             }
         }
+
+        num_dirty++;
+        dps[1].piece = capture;
+        dps[1].from = end_square;
+        dps[1].to = -1;
     }
 
     int promotion = move.promote_to();
@@ -702,10 +839,18 @@ void Position::make_move(const Move& move) {
         } else {
             black_material += values[promotion] - values[PAWN];
         }
+
+        num_dirty++;
+        dps[0].to = -1; // clear pawn
+        dps[num_dirty - 1].piece = new_piece;
+        dps[num_dirty - 1].from = -1;
+        dps[num_dirty - 1].to = end_square;
     } else if (piece_type == KING && std::abs(start_col - end_col) > 1) {
         // check castle
         board[end_row][end_col] = piece;
         hash_value ^= zobrist.piece_table[piece - 1][end_square];
+
+        num_dirty++;
 
         int direction = start_col - end_col;
         if (direction > 0) {
@@ -721,6 +866,9 @@ void Position::make_move(const Move& move) {
             piece_maps[ROOK][turn] &= ~(1ULL << rook_start);
             piece_maps[ROOK][turn] |= (1ULL << rook_end);
 
+            dps[num_dirty - 1].piece = rook;
+            dps[num_dirty - 1].from = rook_start;
+            dps[num_dirty - 1].to = rook_end;
         } else {
             int rook = board[end_row][7];
             board[end_row][end_col - 1] = rook;
@@ -733,6 +881,10 @@ void Position::make_move(const Move& move) {
 
             piece_maps[ROOK][turn] &= ~(1ULL << rook_start);
             piece_maps[ROOK][turn] |= (1ULL << rook_end);
+
+            dps[num_dirty - 1].piece = rook;
+            dps[num_dirty - 1].from = rook_start;
+            dps[num_dirty - 1].to = rook_end;
         }
     } else if (piece_type == PAWN && start_col != end_col &&
                !board[end_row][end_col]) {
@@ -754,6 +906,11 @@ void Position::make_move(const Move& move) {
             piece_maps[PAWN][WHITE] &= ~(1ULL << square);
             white_material -= values[PAWN];
         }
+
+        num_dirty++;
+        dps[num_dirty - 1].piece = piece == WHITE_PAWN ? BLACK_PAWN : WHITE_PAWN;
+        dps[num_dirty - 1].from = square;
+        dps[num_dirty - 1].to = -1;
     } else {
         board[end_row][end_col] = piece;
         hash_value ^= zobrist.piece_table[piece - 1][end_square];
@@ -863,7 +1020,34 @@ void Position::make_move(const Move& move) {
     } else {
         hash_value = 0ULL;
     }
+
+    // efficiently update accumulator - only have to worry about the few indices that changed this move
+    for (int i = 0; i < num_dirty; i++) {
+        dirty_piece dp = dps[i];
+        if (dp.from >= 0) {
+            // subtract from accumulator
+            int input_index = dp.from * 12 + dp.piece - 1;
+            for (int j = 0; j < HIDDEN_SIZE; j++) {
+                NNUE::hidden_layer[j] -= NNUE::hidden_weights[input_index][j];
+            }
+        }
+        if (dp.to >= 0) {
+            // add to accumulator
+            int input_index = dp.to * 12 + dp.piece - 1;
+            for (int j = 0; j < HIDDEN_SIZE; j++) {
+                NNUE::hidden_layer[j] += NNUE::hidden_weights[input_index][j];
+            }
+        }
+
+        m.dps[i] = dp;
+    }
+
+    eval[half_moves] = NNUE::evaluate_incremental();
+
+    m.num_dirty = num_dirty;
+    move_stack.push(m);
 }
+
 
 void Position::unmake_move(struct move_info move_info) {
     Move move = move_info.move;
@@ -985,6 +1169,25 @@ void Position::unmake_move(struct move_info move_info) {
     en_passant_col = move_info.prev_en_passant;
     fifty_move_count = move_info.prev_fifty_move;
     hash_value = move_info.prev_hash;
+
+    // update accumulator
+    for (int i = 0; i < move_info.num_dirty; i++) {
+        dirty_piece dp = move_info.dps[i];
+        if (dp.from >= 0) {
+            // add to accumulator
+            int input_index = dp.from * 12 + dp.piece - 1;
+            for (int j = 0; j < HIDDEN_SIZE; j++) {
+                NNUE::hidden_layer[j] += NNUE::hidden_weights[input_index][j];
+            }
+        }
+        if (dp.to >= 0) {
+            // subtract from accumulator
+            int input_index = dp.to * 12 + dp.piece - 1;
+            for (int j = 0; j < HIDDEN_SIZE; j++) {
+                NNUE::hidden_layer[j] -= NNUE::hidden_weights[input_index][j];
+            }
+        }
+    }
 }
 
 void Position::pop() {
@@ -1037,31 +1240,21 @@ std::string Position::get_draw() {
 
 
 bool Position::no_legal_moves() {
-    // heuristic - search from top to bottom for black, bottom to top for white
-    int start, inc;
-    if (turn == WHITE) {
-        start = 7;
-        inc = -1;
-    } else {
-        start = 0;
-        inc = 1;
-    }
+    uint64_t pieces = turn == WHITE ? white_pieces : black_pieces;
+    while (pieces) {
+        int from_square = least_set_bit(pieces);
+        pieces &= pieces - 1;
 
-    for (int row = start; (row >= 0 && row < 8); row += inc) {
-        for (int col = 0; col < 8; col++) {
-            if (!board[row][col] || turn != get_color(board[row][col])) {
-                continue;
-            }
+        int row = from_square / 8;
+        int col = from_square % 8;
 
-            uint64_t move_map = get_piece_moves(row, col);
-                
-            while (move_map) {
-                int to_square = least_set_bit(move_map);
-                move_map &= move_map - 1;
+        uint64_t move_map = get_piece_moves(row, col);
+        while (move_map) {
+            int to_square = least_set_bit(move_map);
+            move_map &= move_map - 1;
 
-                if (is_legal(Move(row * 8 + col, to_square))) {
-                    return false;
-                }
+            if (is_legal(Move(row * 8 + col, to_square))) {
+                return false;
             }
         }
     }

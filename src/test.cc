@@ -11,10 +11,13 @@ int main(int argc, char * argv[]) {
     int draw_count = 0;
 
     int num_games = argc == 1 ? 100 : atoi(argv[1]);
+
+    std::string nnue = "nnue/nnue.bin";
+
     for (int i = 0; i < num_games; i++) {
         printf("i: %d\n", i);
 
-        Position position;
+        Position position(nnue);
 
         Engine old_engine(0.02, 0.02, true);
         Engine new_engine(0.02, 0.02, true);

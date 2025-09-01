@@ -14,13 +14,14 @@
 #include "move_generator.hh"
 
 #define INF 1000000000
-#define MAX_DEPTH 32
 
 
 class Engine {
 public:
     // work into code with if statements to compare different versions in test.cc
     bool test_condition = false;
+
+    int MAX_DEPTH = 64;
 
     Move best_move;
     bool move_found;
@@ -62,7 +63,7 @@ public:
     }
 
     // move order heuristic: moves that caused cutoff at the same depth level
-    Move killers[MAX_DEPTH][2] = {{}};
+    Move killers[64][2] = {{}};
     void update_killers(Move move, int depth) {
         if (killers[depth][0] != move) {
             killers[depth][1] = killers[depth][0];
@@ -85,15 +86,17 @@ public:
     
     Move get_move(Position& position, bool verbose = false);
 
+    void reset();
+
     // info for analysis/debugging
-    int total_nodes = 0;
-    int evaluated_positions = 0;
+    int negamax_nodes = 0;
+    int quiescense_nodes = 0;
 
     float NULL_PRUNE_DEPTH = 2;
     float FUTILITY_PRUNE_DEPTH = 5;
     float ASPIRATION_DELTA = 30;
 
-    // evaluation weights are part of engine class for fine tuning
+    // HCE weights are part of engine class for fine tuning
     float ISOLATED_PAWN_WEIGHT = 11;
     float DOUBLED_PAWN_WEIGHT = 10;
     float BACKWARDS_PAWN_WEIGHT = 13;

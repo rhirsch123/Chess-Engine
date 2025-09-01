@@ -53,7 +53,15 @@ struct pair {
     int second;
 };
 
+struct dirty_piece {
+    int piece;
+    int from;
+    int to;
+};
+
 struct move_info {
+    dirty_piece dps[3];
+    int num_dirty;
     uint64_t prev_hash;
     Move move;
     int prev_en_passant;
@@ -94,11 +102,13 @@ public:
     static uint64_t pawn_attacks[64][2];
     static uint64_t knight_moves[64];
     static uint64_t king_moves[64];
-
+    
     // for detecting threefold repetition - indexed by half moves
-    uint64_t position_history[512];
+    uint64_t position_history[1024];
     // index in position history of the last irreversable move
     int last_threefold_reset = 0;
+
+    int eval[1024];
     
     int board[8][8];
 
@@ -130,8 +140,9 @@ public:
 
     void init_piece_moves();
 
-    Position();
-    Position(int board[8][8], Color turn);
+    Position(std::string nnue_file);
+    Position(int board[8][8], Color turn, std::string nnue_file);
+    Position(std::string fen, std::string nnue_file);
     
     static void print_bitboard(uint64_t bitboard);
     static int get_color(int piece);

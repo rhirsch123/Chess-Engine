@@ -571,11 +571,8 @@ namespace Evaluation {
     }
 
 
-    // heuristic evalution of position, given weight parameters from engine
-    // linear combination of features with weights tuned through reinforcement learning
+    // classical evaluation - currently replaced by NNUE
     int evaluation(Position& position, Engine& engine) {
-        engine.evaluated_positions++;
-
         king_attack_units[WHITE] = 0;
         king_attack_units[BLACK] = 0;
 

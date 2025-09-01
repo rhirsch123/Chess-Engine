@@ -1,16 +1,27 @@
 CC = g++
 CFLAGS = -std=c++17 -g -O3 -flto
-SRCS = main.cc position.cc move_generator.cc engine.cc evaluation.cc zobrist.cc bitboards.cc polyglot.cc
+
+SRCS = position.cc move_generator.cc engine.cc evaluation.cc zobrist.cc bitboards.cc polyglot.cc nnue/nnue.cc
 OBJS = $(SRCS:.cc=.o)
-TARGET = main
 
-all: $(TARGET)
+TARGETS = main test finetune uci
 
-$(TARGET): $(OBJS)
+all: $(TARGETS)
+
+main: main.o $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+
+test: test.o $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+
+finetune: finetune.o $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+
+uci: uci.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.cc
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f *.o */*.o $(TARGETS)

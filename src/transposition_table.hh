@@ -50,6 +50,12 @@ public:
         }
         return false;
     }
+
+    void clear() {
+        for (int i = 0; i < size; i++) {
+            table[i].key = 0ULL;
+        }
+    }
 };
 
 #endif

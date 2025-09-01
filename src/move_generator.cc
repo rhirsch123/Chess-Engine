@@ -17,6 +17,7 @@ MoveGenerator::MoveGenerator(Position& position, Engine& engine, int current_dep
 }
 
 Move MoveGenerator::next_move() {
+    Move move;
     if (stage == GOOD_TACTICS) {
         while (index < tactics.size()) {
             Move move = tactics[index];
@@ -30,7 +31,7 @@ Move MoveGenerator::next_move() {
         }
 
         if (index < tactics.size()) {
-            return tactics[index++];
+            move = tactics[index++];
         } else {
             stage = QUIETS;
             index = 0;
@@ -44,25 +45,26 @@ Move MoveGenerator::next_move() {
                 return engine.quiet_history[a.from()][a.to()] > engine.quiet_history[b.from()][b.to()];
             });
 
-            if (index < quiets.size()) {
-                return quiets[index++];
-            } else {
-                stage = BAD_TACTICS;
-								index = 0;
-                return index < bad_tactics.size() ? bad_tactics[index++] : Move();
-            }
+           return next_move();
         }
     } else if (stage == QUIETS) {
         if (index < quiets.size()) {
-            return quiets[index++];
+            move = quiets[index++];
         } else {
             stage = BAD_TACTICS;
             index = 0;
-            return index < bad_tactics.size() ? bad_tactics[index++] : Move();
+            return next_move();
         }
     } else if (stage == BAD_TACTICS) {
-        return index < bad_tactics.size() ? bad_tactics[index++] : Move();
+        if (index < bad_tactics.size()) {
+            move = bad_tactics[index++];
+        } else {
+            return Move();
+        }
     }
     
-    return Move();
+    if (move && position.is_legal(move)) {
+        return move;
+    }
+    return next_move();
 }

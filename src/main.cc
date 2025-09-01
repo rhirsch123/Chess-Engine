@@ -58,6 +58,8 @@ void write_to_pipe(std::string message) {
 int main() {
     std::string playing = "white";
 
+    std::string nnue = "nnue/nnue.bin";
+
     /* int init_board[8][8] = {
         {BLACK_ROOK, 0, 0, 0, BLACK_ROOK, 0, BLACK_KING, 0},
         {BLACK_PAWN, BLACK_PAWN, 0, 0, 0, BLACK_PAWN, BLACK_BISHOP, BLACK_PAWN},
@@ -68,9 +70,9 @@ int main() {
         {WHITE_PAWN, 0, 0, 0, 0, WHITE_PAWN, WHITE_PAWN, WHITE_PAWN},
         {0, 0, 0, WHITE_ROOK, 0, WHITE_KING, 0, WHITE_ROOK}
     }; 
-    Position position(init_board, BLACK); */
+    Position position(init_board, BLACK, nnue); */
    
-    Position position;
+    Position position(nnue);
     Engine engine(3000, true);
     
     

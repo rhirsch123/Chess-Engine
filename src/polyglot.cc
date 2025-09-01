@@ -296,6 +296,9 @@ namespace Polyglot {
     Move get_book_move(const Position& position, std::string file) {
         std::ifstream book;
         book.open(file, std::ifstream::in | std::ifstream::binary);
+        if (!book) {
+            perror("cannot access opening book");
+        }
 
         polyglot_entry entry;
         uint64_t key = hash(position);
