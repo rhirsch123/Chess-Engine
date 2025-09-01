@@ -147,7 +147,7 @@ b2: output bias, a2: sigmoid activation, loss: squared error
 h = w1 * x + b1
 a1 = CReLU(h)
 out = w2 * a1 + b2
-a2 = sigmoid(a2)
+a2 = sigmoid(out)
 loss = 0.5 * (a2 - y)^2
 
 d_loss / d_a2 = a2 - y
