@@ -74,7 +74,7 @@ int main() {
    
     Position position(nnue);
     Engine engine(3000, true);
-    
+
     
     int pid = fork();
     if (pid < 0) {

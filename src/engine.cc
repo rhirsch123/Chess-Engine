@@ -121,23 +121,14 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             int val = entry.value;
 
             if (entry.type == EXACT && !pv_node) {
-                if (root_node) {
-                    best_move = Move(entry.best_move);
-                }
                 return val;
             } else if (entry.type == UPPER_BOUND) {
                 if (val <= alpha && !pv_node) {
-                    if (root_node) {
-                        best_move = Move(entry.best_move);
-                    }
                     return val;
                 }
                 beta = std::min(beta, val);
             } else if (entry.type == LOWER_BOUND) {
                 if (val >= beta && !pv_node) {
-                    if (root_node) {
-                        best_move = Move(entry.best_move);
-                    }
                     return val;
                 }
                 alpha = std::max(alpha, val);
@@ -445,7 +436,8 @@ Move Engine::get_move(Position& position, bool verbose) {
         printf("depth: %d\n", depth - 1);
         printf("evaluation: %d\n", position.turn == WHITE ? eval : -eval);
         printf("negamax nodes: %d\n", negamax_nodes);
-        printf("quiescense nodes: %d\n\n", quiescense_nodes);
+        printf("quiescense nodes: %d\n", quiescense_nodes);
+        printf("total nodes: %d\n\n", negamax_nodes + quiescense_nodes);
     }
 
     if (timed_game) {

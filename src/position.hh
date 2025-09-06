@@ -141,7 +141,7 @@ public:
     void init_piece_moves();
 
     Position(std::string nnue_file);
-    Position(int board[8][8], Color turn, std::string nnue_file);
+    Position(int board[8][8], int turn, std::string nnue_file);
     Position(std::string fen, std::string nnue_file);
     
     static void print_bitboard(uint64_t bitboard);

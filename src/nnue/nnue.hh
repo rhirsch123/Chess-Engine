@@ -9,8 +9,14 @@
 
 #include "../position.hh"
 
+// SIMD optimizations
+#if __ARM_NEON && __aarch64__
+    #define USE_SIMD
+    #include "arm_neon.h"
+#endif
+
 #define INPUT_SIZE 768  // 64 squares * 6 pieces * 2 colors
-#define HIDDEN_SIZE 2048 // arbitrary
+#define HIDDEN_SIZE 512 // arbitrary
 
 // commonly used values for nnue
 #define SCALE 400

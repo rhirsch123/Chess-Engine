@@ -168,7 +168,7 @@ Position::Position(std::string nnue)
 }
 
 // set up custom position
-Position::Position(int init_board[8][8], Color turn, std::string nnue)
+Position::Position(int init_board[8][8], int turn, std::string nnue)
 : turn(turn), en_passant_col(-1), fifty_move_count(0), half_moves(0), repetitions(1) {
     white_material = 0;
     black_material = 0;
@@ -257,10 +257,10 @@ Position::Position(int init_board[8][8], Color turn, std::string nnue)
 Position::Position(std::string fen, std::string nnue)
 : fifty_move_count(0), repetitions(1) {
     std::istringstream fen_stream(fen);
-	std::string fen_board, fen_turn, fen_castling, fen_ep;
-	int full_moves;
+    std::string fen_board, fen_turn, fen_castling, fen_ep;
+    int full_moves;
 
-	fen_stream >> fen_board >> fen_turn >> fen_castling >> fen_ep >> half_moves >> full_moves;
+    fen_stream >> fen_board >> fen_turn >> fen_castling >> fen_ep >> half_moves >> full_moves;
 
     for (int i = 0; i < 8; i++) {
         for (int j = 0; j < 8; j++) {
@@ -275,13 +275,13 @@ Position::Position(std::string fen, std::string nnue)
         piece_maps[i][BLACK] = 0ULL;
     }
 
-	int index = 0;
-	for (char c : fen_board) {
-		if (c == '/') {
-			continue;
-		} else if (isdigit(c)) {
-			index += c - '0';
-		} else {
+    int index = 0;
+    for (char c : fen_board) {
+        if (c == '/') {
+            continue;
+        } else if (isdigit(c)) {
+            index += c - '0';
+        } else {
             int piece;
             if (c == 'P') {
                 piece = WHITE_PAWN;
@@ -308,25 +308,25 @@ Position::Position(std::string fen, std::string nnue)
             } else if (c == 'k') {
                 piece = BLACK_KING;
             }
-			board[index / 8][index % 8] = piece;
+            board[index / 8][index % 8] = piece;
             index++;
-		}
-	}
+        }
+    }
 
-	turn = (fen_turn == "w") ? WHITE : BLACK;
+    turn = (fen_turn == "w") ? WHITE : BLACK;
 
-	for (char c : fen_castling) {
-		if (c == 'K') can_castle[1] = true;
-		else if (c == 'Q') can_castle[0] = true;
-		else if (c == 'k') can_castle[3] = true;
-		else if (c == 'q') can_castle[2] = true;
-	}
+    for (char c : fen_castling) {
+        if (c == 'K') can_castle[1] = true;
+        else if (c == 'Q') can_castle[0] = true;
+        else if (c == 'k') can_castle[3] = true;
+        else if (c == 'q') can_castle[2] = true;
+    }
 
-	if (fen_ep != "-" && fen_ep != "–") {
+    if (fen_ep != "-" && fen_ep != "–") {
         en_passant_col = fen_ep[0] - 'a';
-	} else {
-		en_passant_col = -1;
-	}
+    } else {
+        en_passant_col = -1;
+    }
 
     white_material = 0;
     black_material = 0;

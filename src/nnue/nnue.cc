@@ -60,6 +60,38 @@ namespace NNUE {
 
     // assumes hidden layer has been efficiently updated in make_move()/unmake_move()
     int evaluate_incremental() {
+    #ifdef USE_SIMD
+        const int16x8_t zero = vdupq_n_s16(0);
+        const int16x8_t max  = vdupq_n_s16(QA);
+
+        int32x4_t acc_low0 = vdupq_n_s32(0);
+        int32x4_t acc_high0 = vdupq_n_s32(0);
+        int32x4_t acc_low1 = vdupq_n_s32(0);
+        int32x4_t acc_high1 = vdupq_n_s32(0);
+
+        for (int i = 0; i < HIDDEN_SIZE; i += 16) {
+            int16x8_t layer_vals0 = vld1q_s16(hidden_layer + i);
+            int16x8_t weights0 = vld1q_s16(output_weights + i);
+            int16x8_t layer_vals1 = vld1q_s16(hidden_layer + i + 8);
+            int16x8_t weights1 = vld1q_s16(output_weights + i + 8);
+
+            // clamp
+            layer_vals0 = vmaxq_s16(layer_vals0, zero);
+            layer_vals0 = vminq_s16(layer_vals0, max);
+            layer_vals1 = vmaxq_s16(layer_vals1, zero);
+            layer_vals1 = vminq_s16(layer_vals1, max);
+
+            // multiply-accumulate, widen for overflow
+            acc_low0 = vmlal_s16(acc_low0, vget_low_s16(layer_vals0), vget_low_s16(weights0));
+            acc_high0 = vmlal_s16(acc_high0, vget_high_s16(layer_vals0), vget_high_s16(weights0));
+            acc_low1 = vmlal_s16(acc_low1, vget_low_s16(layer_vals1), vget_low_s16(weights1));
+            acc_high1 = vmlal_s16(acc_high1, vget_high_s16(layer_vals1), vget_high_s16(weights1));
+        }
+
+        int32x4_t acc = vaddq_s32(vaddq_s32(acc_low0, acc_high0), vaddq_s32(acc_low1, acc_high1));
+        int output = output_bias + vaddvq_s32(acc);
+        return output * SCALE / (QA * QB);
+    #else
         int output = output_bias;
 
         for (int i = 0; i < HIDDEN_SIZE; i++) {
@@ -73,5 +105,6 @@ namespace NNUE {
         }
 
         return output * SCALE / (QA * QB);
+    #endif
     }
 }
