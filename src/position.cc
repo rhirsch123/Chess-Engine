@@ -578,13 +578,13 @@ std::vector<Move> Position::get_pseudo_legal_moves(MoveType move_type) {
 
         uint64_t move_map = get_piece_moves(row, col);
         if (move_type == TACTIC || move_type == QUIET) {
-            uint64_t tactics = (turn == WHITE ? black_pieces : white_pieces) | get_en_passant(row, col);
+            uint64_t tactics = turn == WHITE ? black_pieces : white_pieces;
             if (piece == WHITE_PAWN) {
                 // 8th rank
-                tactics |= 0xff;
+                tactics |= 0xff | get_en_passant(row, col);
             } else if (piece == BLACK_PAWN) {
                 // 1st rank
-                tactics |= 0xff00000000000000;
+                tactics |= 0xff00000000000000 | get_en_passant(row, col);
             }
             
             if (move_type == TACTIC) {

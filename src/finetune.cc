@@ -4,21 +4,20 @@
 
 #define LEARN_RATE 0.01
 
-// Joona Kiiski's practical tuning method used for Stockfish
 int main() {
     std::string nnue = "nnue/nnue.bin";
 
-    float delta = 25;
-    float weight = 10;
+    float delta = 20;
+    float weight = 100;
     for (int i = 0; i < 10000; i++) {
         printf("i: %d\n", i);
         Position position(nnue);
 
-        Engine tune_up_engine(0.002, 0.005, true);
-        Engine tune_down_engine(0.002, 0.005, true);
+        Engine tune_up_engine(0.01, 0.01, true);
+        Engine tune_down_engine(0.01, 0.01, true);
 
-        tune_up_engine.ASPIRATION_DELTA = weight + delta;
-        tune_down_engine.ASPIRATION_DELTA = weight - delta;
+        tune_up_engine.RFP_SCALE = weight + delta;
+        tune_down_engine.RFP_SCALE = weight - delta;
 
         std::string terminal;
         while (1) {

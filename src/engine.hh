@@ -93,7 +93,13 @@ public:
     int quiescense_nodes = 0;
 
     float NULL_PRUNE_DEPTH = 2;
-    float FUTILITY_PRUNE_DEPTH = 5;
+    float RFP_DEPTH = 8;
+    float RFP_BASE = 50;
+    float RFP_SCALE = 100;
+    float LMP_DEPTH = 5;
+    float FUTILITY_PRUNE_DEPTH = 6;
+    float FUTILITY_PRUNE_BASE = 100;
+    float FUTILITY_PRUNE_SCALE = 150;
     float ASPIRATION_DELTA = 30;
 
     // HCE weights are part of engine class for fine tuning

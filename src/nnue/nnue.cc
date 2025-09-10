@@ -77,8 +77,8 @@ namespace NNUE {
 
             // clamp
             layer_vals0 = vmaxq_s16(layer_vals0, zero);
-            layer_vals0 = vminq_s16(layer_vals0, max);
             layer_vals1 = vmaxq_s16(layer_vals1, zero);
+            layer_vals0 = vminq_s16(layer_vals0, max);
             layer_vals1 = vminq_s16(layer_vals1, max);
 
             // multiply-accumulate, widen for overflow

@@ -8,7 +8,7 @@ make
 ./main  
 
 ### Strength
-~2500 ELO
+~2800-2900 ELO
 
 ### Features
 - [NNUE](https://www.chessprogramming.org/NNUE) (Efficiently Updatable Neural Network) used to evaluate positions

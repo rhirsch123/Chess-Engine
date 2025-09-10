@@ -80,10 +80,11 @@ int main(int argc, char * argv[]) {
 
             if (depth) {
                 engine.timed_game = false;
+				engine.time_per_move = INF;
                 engine.MAX_DEPTH = depth;
             } else if (movetime) {
                 engine.timed_game = false;
-                engine.time_per_move = movetime * 1000;
+                engine.time_per_move = movetime;
             } else {
                 engine.timed_game = true;
                 if (position->turn == WHITE) {
