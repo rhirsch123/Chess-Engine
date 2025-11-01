@@ -73,7 +73,7 @@ int main() {
     Position position(init_board, BLACK, nnue); */
    
     Position position(nnue);
-    Engine engine(3000, true);
+    Engine engine(1000, true);
 
     
     int pid = fork();

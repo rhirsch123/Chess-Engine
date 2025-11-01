@@ -73,19 +73,15 @@ namespace Evaluation {
     }
 
     // static exchange evaluation
-    bool safe_move(Position& position, Move& move) {
-        if (move.exchange > 0) {
-            return true;
-        }
-        
+    bool SEE(Position& position, Move& move, int threshold) {
         int piece = move.promote_to() ? move.promote_to() : position.board[move.start_row()][move.start_col()];
-        char move_turn = Position::get_color(piece);
+        int move_turn = Position::get_color(piece);
         int turn = !move_turn;
         int capture = position.board[move.end_row()][move.end_col()];
         int exchange = capture ? Position::values[Position::get_piece_type(capture)] : 0;
         int last_attacker = Position::get_piece_type(piece);
 
-        if (exchange >= Position::values[last_attacker]) {
+        if (exchange >= Position::values[last_attacker] + threshold) {
             return true;
         }
 
@@ -113,7 +109,7 @@ namespace Evaluation {
                             exchange -= Position::values[last_attacker];
                         }
                     }
-                    return exchange >= 0;
+                    return exchange >= threshold;
                 }
 
                 uint64_t lowest_attackers = position.piece_maps[weakest_piece][turn] & attackers;
@@ -146,7 +142,7 @@ namespace Evaluation {
             attackers = get_attackers(position, end_square, turn, blockers) & blockers;
         }
 
-        return exchange >= 0;
+        return exchange >= threshold;
     }
 
 
@@ -261,7 +257,7 @@ namespace Evaluation {
                     int attack = least_set_bit(attacked_squares);
                     attacked_squares &= attacked_squares - 1;
                     Move move = Move(square, attack);
-                    if (safe_move(position, move)) {
+                    if (SEE(position, move)) {
                         trapped = false;
                         break;
                     }
@@ -337,7 +333,7 @@ namespace Evaluation {
                     int attack = least_set_bit(attacked_squares);
                     attacked_squares &= attacked_squares - 1;
                     Move move = Move(square, attack);
-                    if (safe_move(position, move)) {
+                    if (SEE(position, move)) {
                         trapped = false;
                         break;
                     }
@@ -396,7 +392,7 @@ namespace Evaluation {
                     int attack = least_set_bit(attacked_squares);
                     attacked_squares &= attacked_squares - 1;
                     Move move = Move(square, attack);
-                    if (safe_move(position, move)) {
+                    if (SEE(position, move)) {
                         trapped = false;
                         break;
                     }
@@ -466,7 +462,7 @@ namespace Evaluation {
                         int attack = least_set_bit(attacked_squares);
                         attacked_squares &= attacked_squares - 1;
                         Move move = Move(square, attack);
-                        if (safe_move(position, move)) {
+                        if (SEE(position, move)) {
                             trapped = false;
                             break;
                         }

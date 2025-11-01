@@ -21,8 +21,8 @@ Move MoveGenerator::next_move() {
     if (stage == GOOD_TACTICS) {
         while (index < tactics.size()) {
             Move move = tactics[index];
-            // static exchange evaluation
-            if (!Evaluation::safe_move(position, move)) {
+            // positive static exchange evaluation
+            if (!Evaluation::SEE(position, move)) {
                 bad_tactics.push_back(move);
                 index++;
             } else {

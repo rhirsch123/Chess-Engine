@@ -10,8 +10,9 @@
 
 // extract binary training data from the .plain version of a binpack file
 
-std::vector<uint8_t> encode_board(std::string& fen, int to_square, char * turn, bool * is_capture) {
-    std::vector<uint8_t> encoded(768, 0);
+std::vector<uint64_t> encode_board(std::string& fen, int to_square, char * turn, bool * is_capture) {    
+    // bitboards: white, black, pawns, knights, bishops, rooks, queens, kings
+    std::vector<uint64_t> encoded(8, 0);
     
     std::istringstream fen_stream(fen);
     std::string fen_board, fen_castling, fen_ep, fen_turn;
@@ -29,34 +30,43 @@ std::vector<uint8_t> encode_board(std::string& fen, int to_square, char * turn, 
         } else if (isdigit(c)) {
             index += c - '0';
         } else {
-            int piece;
             if (c == 'P') {
-                piece = 0;
+                encoded[0] |= 1ULL << index;
+                encoded[2] |= 1ULL << index;
             } else if (c == 'N') {
-                piece = 1;
+                encoded[0] |= 1ULL << index;
+                encoded[3] |= 1ULL << index;
             } else if (c == 'B') {
-                piece = 2;
+                encoded[0] |= 1ULL << index;
+                encoded[4] |= 1ULL << index;
             } else if (c == 'R') {
-                piece = 3;
+                encoded[0] |= 1ULL << index;
+                encoded[5] |= 1ULL << index;
             } else if (c == 'Q') {
-                piece = 4;
+                encoded[0] |= 1ULL << index;
+                encoded[6] |= 1ULL << index;
             } else if (c == 'K') {
-                piece = 5;
+                encoded[0] |= 1ULL << index;
+                encoded[7] |= 1ULL << index;
             } else if (c == 'p') {
-                piece = 6;
+                encoded[1] |= 1ULL << index;
+                encoded[2] |= 1ULL << index;
             } else if (c == 'n') {
-                piece = 7;
+                encoded[1] |= 1ULL << index;
+                encoded[3] |= 1ULL << index;
             } else if (c == 'b') {
-                piece = 8;
+                encoded[1] |= 1ULL << index;
+                encoded[4] |= 1ULL << index;
             } else if (c == 'r') {
-                piece = 9;
+                encoded[1] |= 1ULL << index;
+                encoded[5] |= 1ULL << index;
             } else if (c == 'q') {
-                piece = 10;
+                encoded[1] |= 1ULL << index;
+                encoded[6] |= 1ULL << index;
             } else if (c == 'k') {
-                piece = 11;
+                encoded[1] |= 1ULL << index;
+                encoded[7] |= 1ULL << index;
             }
-            
-            encoded[index * 12 + piece] = 1;
 
             if (index == to_square) {
                 *is_capture = true;
@@ -70,7 +80,7 @@ std::vector<uint8_t> encode_board(std::string& fen, int to_square, char * turn, 
 
 struct label {
     int16_t eval;
-    int16_t game_ply;
+    uint16_t game_ply;
     int8_t result;
     int8_t turn;
 };
@@ -84,9 +94,9 @@ int main() {
     std::ofstream(positions_out, std::ios::trunc);
     std::ofstream(labels_out, std::ios::trunc);
 
-    std::string input_file = "binpack.plain";
+    std::string input_file = "binpack_data.plain";
 
-    std::vector<std::vector<uint8_t>> positions;
+    std::vector<std::vector<uint64_t>> positions;
     std::vector<label> labels;
 
     int num_positions = 0;
@@ -107,6 +117,7 @@ int main() {
     std::random_device rd;
     std::mt19937 gen(rd());
 
+    int count = 0;
     while (std::getline(infile, line)) {
         if (line.empty()) continue;
 
@@ -124,7 +135,8 @@ int main() {
         } else if (line.rfind("result ", 0) == 0) {
             result = std::stoi(line.substr(7));
         } else if (line == "e") {
-            if (ply > 5 && score != 0) {
+            count++;
+            if (ply > 5 && score != 0 && score < 2000 && score > -2000 && count % 2 == 0) {
                 int to_col = move[2] - 'a';
                 int to_row = 8 - (move[3] - '0');
                 int to_square = to_row * 8 + to_col;
@@ -160,7 +172,7 @@ int main() {
 
                     std::ofstream pos_file(positions_out, std::ios::binary | std::ios::app);
                     for (size_t i : perm)
-                        pos_file.write(reinterpret_cast<char*>(positions[i].data()), 768);
+                        pos_file.write(reinterpret_cast<char*>(positions[i].data()), 8 * sizeof(uint64_t));
 
                     std::ofstream label_file(labels_out, std::ios::binary | std::ios::app);
                     for (size_t i : perm) {
@@ -181,7 +193,7 @@ int main() {
 
         std::ofstream pos_file(positions_out, std::ios::binary | std::ios::app);
         for (size_t i : perm)
-            pos_file.write(reinterpret_cast<char*>(positions[i].data()), positions[i].size());
+            pos_file.write(reinterpret_cast<char*>(positions[i].data()), 8 * sizeof(uint64_t));
 
         std::ofstream label_file(labels_out, std::ios::binary | std::ios::app);
         for (size_t i : perm) {

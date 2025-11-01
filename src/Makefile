@@ -4,17 +4,14 @@ CFLAGS = -std=c++17 -g -O3 -flto
 SRCS = position.cc move_generator.cc engine.cc evaluation.cc zobrist.cc bitboards.cc polyglot.cc nnue/nnue.cc
 OBJS = $(SRCS:.cc=.o)
 
-TARGETS = main test finetune uci
+TARGETS = main perft uci
 
 all: $(TARGETS)
 
 main: main.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
-test: test.o $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
-
-finetune: finetune.o $(OBJS)
+perft: perft.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
 uci: uci.o $(OBJS)

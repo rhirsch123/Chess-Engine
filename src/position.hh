@@ -8,6 +8,7 @@
 
 #include "move.hh"
 #include "zobrist.hh"
+#include "nnue/nnue.hh"
 
 // gcc built-in functions
 #define num_set_bits(bitboard) __builtin_popcountll(bitboard)
@@ -60,8 +61,6 @@ struct dirty_piece {
 };
 
 struct move_info {
-    dirty_piece dps[3];
-    int num_dirty;
     uint64_t prev_hash;
     Move move;
     int prev_en_passant;
@@ -102,6 +101,10 @@ public:
     static uint64_t pawn_attacks[64][2];
     static uint64_t knight_moves[64];
     static uint64_t king_moves[64];
+
+    // half move, hidden layer index
+    int16_t acc_white_stack[1024][HIDDEN_SIZE];
+    int16_t acc_black_stack[1024][HIDDEN_SIZE];
     
     // for detecting threefold repetition - indexed by half moves
     uint64_t position_history[1024];
@@ -113,7 +116,7 @@ public:
     int board[8][8];
 
     // holds history needed to unmake last move
-    std::stack<struct move_info> move_stack;
+    move_info move_stack[1024];
 
     // bitboards indexed by piece type, color
     uint64_t piece_maps[6][2];
@@ -173,7 +176,7 @@ public:
     bool no_legal_moves();
 
     // < 0: unknown, 0: no legal moves, > 0: at least one legal move
-    std::string get_terminal_state(int legals_exist = -1);
+    std::string get_terminal_state(int legals = -1);
 };
 
 #endif

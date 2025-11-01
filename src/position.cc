@@ -1,5 +1,4 @@
 #include "position.hh"
-#include "nnue/nnue.hh"
 
 int Position::values[6] = { 100, 300, 300, 500, 900, 2000 };
 
@@ -164,7 +163,7 @@ Position::Position(std::string nnue)
         piece_maps[BISHOP][BLACK] | piece_maps[KNIGHT][BLACK] | piece_maps[PAWN][BLACK];
     
     NNUE::init(nnue);
-    eval[0] = NNUE::evaluate(*this);
+    eval[0] = NNUE::evaluate(board, turn, NNUE::get_output_bucket(white_pieces | black_pieces));
 }
 
 // set up custom position
@@ -250,7 +249,7 @@ Position::Position(int init_board[8][8], int turn, std::string nnue)
         piece_maps[BISHOP][BLACK] | piece_maps[KNIGHT][BLACK] | piece_maps[PAWN][BLACK];
     
     NNUE::init(nnue);
-    eval[0] = NNUE::evaluate(*this);
+    eval[0] = NNUE::evaluate(board, turn, NNUE::get_output_bucket(white_pieces | black_pieces));
 }
 
 
@@ -367,7 +366,7 @@ Position::Position(std::string fen, std::string nnue)
         piece_maps[BISHOP][BLACK] | piece_maps[KNIGHT][BLACK] | piece_maps[PAWN][BLACK];
     
     NNUE::init(nnue);
-    eval[0] = NNUE::evaluate(*this);
+    eval[0] = NNUE::evaluate(board, turn, NNUE::get_output_bucket(white_pieces | black_pieces));
 }
 
 
@@ -504,6 +503,10 @@ uint64_t Position::get_pawn_pushes(int row, int col) {
 
 // get piece moves helper function
 uint64_t Position::get_en_passant(int row, int col) {
+    if (en_passant_col < 0) {
+        return 0ULL;
+    }
+
     int direction = (turn == WHITE) ? -1 : 1;
 
     for (int dc = -1; dc <= 1; dc += 2) {
@@ -548,10 +551,7 @@ uint64_t Position::get_piece_moves(int row, int col) {
     if (piece_type == KNIGHT) {
         return knight_moves[square] & (~friendly_pieces);
     }
-    if (piece_type == KING) {
-        return (king_moves[square] | get_castle_moves()) & (~friendly_pieces);
-    }
-    return 0ULL;
+    return (king_moves[square] | get_castle_moves()) & (~friendly_pieces);
 }
 
 
@@ -740,6 +740,10 @@ std::vector<Move> Position::get_legal_moves() {
 void Position::make_move(const Move& move) {
     bool null_descendant = (hash_value == 0ULL);
 
+    // copy accumulator
+    std::memcpy(acc_white_stack[half_moves], NNUE::accumulators[WHITE], HIDDEN_SIZE * sizeof(int16_t));
+    std::memcpy(acc_black_stack[half_moves], NNUE::accumulators[BLACK], HIDDEN_SIZE * sizeof(int16_t));
+
     int start_square = move.from();
     int end_square = move.to();
 
@@ -757,8 +761,6 @@ void Position::make_move(const Move& move) {
         prev_castle[i] = can_castle[i];
     }
     struct move_info m = {
-        {NULL, NULL, NULL},
-        0,
         hash_value,
         move,
         en_passant_col,
@@ -768,6 +770,7 @@ void Position::make_move(const Move& move) {
         repetitions,
         {prev_castle[0], prev_castle[1], prev_castle[2], prev_castle[3]}
     };
+    move_stack[half_moves] = m;
 
     board[start_row][start_col] = 0;
     hash_value ^= zobrist.piece_table[piece - 1][start_square];
@@ -1025,27 +1028,26 @@ void Position::make_move(const Move& move) {
     for (int i = 0; i < num_dirty; i++) {
         dirty_piece dp = dps[i];
         if (dp.from >= 0) {
-            // subtract from accumulator
-            int input_index = dp.from * 12 + dp.piece - 1;
+            // subtract from accumulators
+            int white_index = dp.from * 12 + dp.piece - 1;
+            int black_index = NNUE::black_index(dp.from, dp.piece);
             for (int j = 0; j < HIDDEN_SIZE; j++) {
-                NNUE::hidden_layer[j] -= NNUE::hidden_weights[input_index][j];
+                NNUE::accumulators[WHITE][j] -= NNUE::hidden_weights[white_index][j];
+                NNUE::accumulators[BLACK][j] -= NNUE::hidden_weights[black_index][j];
             }
         }
         if (dp.to >= 0) {
-            // add to accumulator
-            int input_index = dp.to * 12 + dp.piece - 1;
+            // add to accumulators
+            int white_index = dp.to * 12 + dp.piece - 1;
+            int black_index = NNUE::black_index(dp.to, dp.piece);
             for (int j = 0; j < HIDDEN_SIZE; j++) {
-                NNUE::hidden_layer[j] += NNUE::hidden_weights[input_index][j];
+                NNUE::accumulators[WHITE][j] += NNUE::hidden_weights[white_index][j];
+                NNUE::accumulators[BLACK][j] += NNUE::hidden_weights[black_index][j];
             }
         }
-
-        m.dps[i] = dp;
     }
 
-    eval[half_moves] = NNUE::evaluate_incremental();
-
-    m.num_dirty = num_dirty;
-    move_stack.push(m);
+    eval[half_moves] = NNUE::evaluate_incremental(turn, NNUE::get_output_bucket(white_pieces | black_pieces));
 }
 
 
@@ -1170,30 +1172,14 @@ void Position::unmake_move(struct move_info move_info) {
     fifty_move_count = move_info.prev_fifty_move;
     hash_value = move_info.prev_hash;
 
-    // update accumulator
-    for (int i = 0; i < move_info.num_dirty; i++) {
-        dirty_piece dp = move_info.dps[i];
-        if (dp.from >= 0) {
-            // add to accumulator
-            int input_index = dp.from * 12 + dp.piece - 1;
-            for (int j = 0; j < HIDDEN_SIZE; j++) {
-                NNUE::hidden_layer[j] += NNUE::hidden_weights[input_index][j];
-            }
-        }
-        if (dp.to >= 0) {
-            // subtract from accumulator
-            int input_index = dp.to * 12 + dp.piece - 1;
-            for (int j = 0; j < HIDDEN_SIZE; j++) {
-                NNUE::hidden_layer[j] -= NNUE::hidden_weights[input_index][j];
-            }
-        }
-    }
+    // revert accumulator
+    std::memcpy(NNUE::accumulators[WHITE], acc_white_stack[half_moves], HIDDEN_SIZE * sizeof(int16_t));
+    std::memcpy(NNUE::accumulators[BLACK], acc_black_stack[half_moves], HIDDEN_SIZE * sizeof(int16_t));
 }
 
 void Position::pop() {
-    if (!move_stack.empty()) {        
-        unmake_move(move_stack.top());
-        move_stack.pop();
+    if (half_moves > 0) {
+        unmake_move(move_stack[half_moves - 1]);
     }
 }
 
@@ -1262,8 +1248,8 @@ bool Position::no_legal_moves() {
     return true;
 }
 
-std::string Position::get_terminal_state(int legals_exist) {
-    if (legals_exist <= 0 && (!legals_exist || no_legal_moves())) {
+std::string Position::get_terminal_state(int legals) {
+    if (legals <= 0 && (!legals || no_legal_moves())) {
         if (in_check()) {
             std::string winner = (turn == WHITE) ? "black" : "white";
             return winner + " win";

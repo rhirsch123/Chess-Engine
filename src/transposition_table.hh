@@ -35,7 +35,9 @@ public:
         tt_entry& current = table[index];
 
         // always replace
-        if (current.key != entry.key || entry.depth >= current.depth || (entry.type == EXACT && current.type != EXACT)) {
+        if (current.key != entry.key || entry.depth >= current.depth || 
+            (entry.depth >= current.depth - 2 && entry.type == EXACT && current.type != EXACT)) {
+        
             current = entry;
         }
     }

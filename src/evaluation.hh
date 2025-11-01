@@ -68,7 +68,7 @@ namespace Evaluation {
         260, 272, 283, 295, 307, 320, 330, 342, 355, 365
     };
 
-    bool safe_move(Position& position, Move& move);
+    bool SEE(Position& position, Move& move, int threshold = 0);
     int evaluation(Position& position, Engine& engine);
 }
 
