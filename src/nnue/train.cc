@@ -234,8 +234,8 @@ void train(const char * positions_file, const char * labels_file, long num_posit
     float v_output_weights_stm[OUTPUT_BUCKETS][HIDDEN_SIZE] = {{}};
     float m_output_weights_opp[OUTPUT_BUCKETS][HIDDEN_SIZE] = {{}};
     float v_output_weights_opp[OUTPUT_BUCKETS][HIDDEN_SIZE] = {{}};
-    float m_output_bias[OUTPUT_BUCKETS] = {}; //0.0;
-    float v_output_bias[OUTPUT_BUCKETS] = {}; //0.0;
+    float m_output_bias[OUTPUT_BUCKETS] = {};
+    float v_output_bias[OUTPUT_BUCKETS] = {};
 
 #ifdef USE_NEON
     // vector constants for fast gradient updates
