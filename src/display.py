@@ -10,9 +10,8 @@ if not os.path.exists(FIFO_C_TO_P):
 if not os.path.exists(FIFO_P_TO_C):
     os.mkfifo(FIFO_P_TO_C)
 
-WIDTH = 600
+WIDTH, HEIGHT = 600, 600
 SQUARE_SIZE = WIDTH // 8
-HEIGHT = WIDTH + 2 * SQUARE_SIZE
 
 LIGHT = (220, 190, 150)
 DARK = (160, 120, 85)
@@ -69,15 +68,6 @@ getting_promotion = False
 promotion_move = None
 game_end = False
 
-with open(FIFO_P_TO_C, 'w') as fifo:
-    fifo.write("get time\n")
-
-with open(FIFO_C_TO_P, 'r') as fifo:
-    minutes = float(fifo.readline().strip())
-    increment = float(fifo.readline().strip())
-player_seconds = minutes * 60
-engine_seconds = minutes * 60
-timed_game = minutes > 0
 
 with open(FIFO_P_TO_C, 'w') as fifo:
     fifo.write("get playing\n")
@@ -91,22 +81,6 @@ for name in piece_names:
     pieces[name] = pygame.transform.scale(pygame.image.load(f"../icons/{name}.png"), (SQUARE_SIZE, SQUARE_SIZE))
 
 def draw_board(board):
-    if timed_game:
-        pygame.draw.rect(screen, (0, 0, 0), (0, 0, WIDTH, SQUARE_SIZE))
-        pygame.draw.rect(screen, (0, 0, 0), (0, SQUARE_SIZE * 9, WIDTH, SQUARE_SIZE))
-
-        font = pygame.font.Font(None, 36)
-        engine_str = f"{int(engine_seconds) // 60}:{(int(engine_seconds) % 60):02}"
-        text = font.render(engine_str, True, (255, 255, 255))
-        text_rect = text.get_rect(center=(WIDTH // 2, SQUARE_SIZE / 2))
-        screen.blit(text, text_rect)
-
-        font = pygame.font.Font(None, 36)
-        player_str = f"{int(player_seconds) // 60}:{(int(player_seconds) % 60):02}"
-        text = font.render(player_str, True, (255, 255, 255))
-        text_rect = text.get_rect(center=(WIDTH // 2, SQUARE_SIZE * 9.5))
-        screen.blit(text, text_rect)
-    
     if playing == 'white':
         for row in range(8):
             for col in range(8):
@@ -116,7 +90,7 @@ def draw_board(board):
                 else:
                     color = DARK_HIGHLIGHT if highlight else DARK
 
-                row_pos = (row + 1) * SQUARE_SIZE
+                row_pos = row * SQUARE_SIZE
                 col_pos = col * SQUARE_SIZE
 
                 pygame.draw.rect(screen, color, (col_pos, row_pos, SQUARE_SIZE, SQUARE_SIZE))
@@ -136,7 +110,7 @@ def draw_board(board):
                 else:
                     color = DARK_HIGHLIGHT if highlight else DARK
 
-                row_pos = (row + 1) * SQUARE_SIZE
+                row_pos = row * SQUARE_SIZE
                 col_pos = col * SQUARE_SIZE
 
                 pygame.draw.rect(screen, color, (col_pos, row_pos, SQUARE_SIZE, SQUARE_SIZE))
@@ -178,13 +152,7 @@ def move_from_str(move):
     return Move((int(move[0]), int(move[1])), (int(move[2]), int(move[3])), promote_to)
 
 def update_board(move):
-    global turn, player_seconds, engine_seconds
-
-    if turn == playing:
-        player_seconds += increment
-    else:
-        engine_seconds += increment
-
+    global turn
     turn = "black" if turn == "white" else "white"
 
     start = move.start
@@ -251,15 +219,15 @@ def get_terminal_state():
 
 
 def draw_promotion():
-    pygame.draw.rect(screen, (255, 255, 255), (2 * SQUARE_SIZE, 3 * SQUARE_SIZE, SQUARE_SIZE * 4, SQUARE_SIZE * 4))
+    pygame.draw.rect(screen, (255, 255, 255), (2 * SQUARE_SIZE, 2 * SQUARE_SIZE, SQUARE_SIZE * 4, SQUARE_SIZE * 4))
     queen = pygame.transform.scale(pygame.image.load(f"../icons/bQ.png"), (SQUARE_SIZE * 2, SQUARE_SIZE * 2))
     rook = pygame.transform.scale(pygame.image.load(f"../icons/bR.png"), (SQUARE_SIZE * 2, SQUARE_SIZE * 2))
     bishop = pygame.transform.scale(pygame.image.load(f"../icons/bB.png"), (SQUARE_SIZE * 2, SQUARE_SIZE * 2))
     knight = pygame.transform.scale(pygame.image.load(f"../icons/bN.png"), (SQUARE_SIZE * 2, SQUARE_SIZE * 2))
-    screen.blit(queen, (2 * SQUARE_SIZE, 3 * SQUARE_SIZE))
-    screen.blit(rook, (4 * SQUARE_SIZE, 3 * SQUARE_SIZE))
-    screen.blit(bishop, (2 * SQUARE_SIZE, 5 * SQUARE_SIZE))
-    screen.blit(knight, (4 * SQUARE_SIZE, 5 * SQUARE_SIZE))
+    screen.blit(queen, (2 * SQUARE_SIZE, 2 * SQUARE_SIZE))
+    screen.blit(rook, (4 * SQUARE_SIZE, 2 * SQUARE_SIZE))
+    screen.blit(bishop, (2 * SQUARE_SIZE, 4 * SQUARE_SIZE))
+    screen.blit(knight, (4 * SQUARE_SIZE, 4 * SQUARE_SIZE))
 
 
 def handle_click(pos):
@@ -267,13 +235,8 @@ def handle_click(pos):
     
     if playing == 'white':
         col, row = pos[0] // SQUARE_SIZE, pos[1] // SQUARE_SIZE
-        row -= 1
     elif playing == 'black':
         col, row = 7 - (pos[0]) // SQUARE_SIZE, 7 - (pos[1]) // SQUARE_SIZE
-        row += 1
-
-    if row < 0 or row > 7:
-        return
     
     if getting_promotion:
         if row >= 2 and row <= 5 and col >= 2 and col <= 5:
@@ -332,10 +295,9 @@ def handle_click(pos):
 
 
 def main():
-    global board, last_move, player_seconds, engine_seconds, game_end
+    global board, last_move, game_end
 
     engine_playing = 'black' if playing == 'white' else 'white'
-    player_timer_start = False
 
     running = True
     while running:
@@ -353,38 +315,19 @@ def main():
             draw_promotion()
         pygame.display.flip()
 
-        if not game_end:
-            if timed_game and turn == playing:
-                if not player_timer_start:
-                    player_start = time.time()
-                    player_timer_start = True
-                else:
-                    player_timer_start = True
-                    player_seconds -= time.time() - player_start
-                    player_start = time.time()
-                
-            elif turn == engine_playing:
-                if timed_game:
-                    player_timer_start = False
+        if turn == engine_playing and not game_end:
+            engine_move = get_move()
 
-                    engine_start = time.time()
-
-                engine_move = get_move()
-                
-                if timed_game:
-                    engine_elapsed = time.time() - engine_start
-                    engine_seconds -= engine_elapsed
-
-                if engine_move:
-                    update_board(engine_move)
-                
-                last_move = (engine_move.start, engine_move.end)
-                
-                time.sleep(0.2)
-                terminal = get_terminal_state()
-                if terminal and not game_end:
-                    print(terminal)
-                    game_end = True
+            if engine_move:
+                update_board(engine_move)
+            
+            last_move = (engine_move.start, engine_move.end)
+            
+            time.sleep(0.2)
+            terminal = get_terminal_state()
+            if terminal and not game_end:
+                print(terminal)
+                game_end = True
         
 
     pygame.quit()

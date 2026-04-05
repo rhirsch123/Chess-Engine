@@ -1,35 +1,18 @@
-#include <vector>
-#include <cstdint>
-#include <random>
-#include <unordered_map>
+#include "bitboards.hh"
 
-// get rook attack mask (excluding edges) not considering blocking
-uint64_t get_rook_mask(int square) {
-    uint64_t mask = 0ULL;
-    int row = square / 8;
-    int col = square % 8;
-
-    // horizontal
-    for (int i = col - 1; i >= 1; i--) {
-        mask |= (1ULL << (row * 8 + i));
+// for debugging
+void print_bitboard(uint64_t bitboard) {
+    for (int i = 0; i < 64; i++) {
+        if (i % 8 == 0) {
+            printf("\n");
+        }
+        printf("%c", (bitboard & (1ULL << i)) ? '1' : '0');
     }
-    for (int i = col + 1; i <= 6; i++) {
-        mask |= (1ULL << (row * 8 + i));
-    }
-
-    // vertical
-    for (int i = row - 1; i >= 1; i--) {
-        mask |= (1ULL << (i * 8 + col));
-    }
-    for (int i = row + 1; i <= 6; i++) {
-        mask |= (1ULL << (i * 8 + col));
-    }
-
-    return mask;
+    printf("\n\n");
 }
 
-// given a rook mask, generate all possible subsets of occupancy along those ranks/files
-std::vector<uint64_t> get_all_occupancies(uint64_t mask) {
+// given a mask, generate all possible subsets of occupancy
+std::vector<uint64_t> get_all_subsets(uint64_t mask) {
     std::vector<int> bit_positions;
     for (int i = 0; i < 64; i++) {
         if (mask & (1ULL << i)) {
@@ -50,6 +33,31 @@ std::vector<uint64_t> get_all_occupancies(uint64_t mask) {
     return variations;
 }
 
+// get rook attack mask excluding edges and not considering blocking
+uint64_t get_rook_mask(int square) {
+    uint64_t mask = 0ULL;
+    int row = square / 8;
+    int col = square % 8;
+
+    // horizontal
+    for (int i = col - 1; i >= 1; i--) {
+        mask |= square_bitboard(row * 8 + i);
+    }
+    for (int i = col + 1; i <= 6; i++) {
+        mask |= square_bitboard(row * 8 + i);
+    }
+
+    // vertical
+    for (int i = row - 1; i >= 1; i--) {
+        mask |= square_bitboard(i * 8 + col);
+    }
+    for (int i = row + 1; i <= 6; i++) {
+        mask |= square_bitboard(i * 8 + col);
+    }
+
+    return mask;
+}
+
 // generate bitboard of attacked squares given position of rook and board occupancy
 uint64_t get_rook_attacks(int square, uint64_t occupancy) {
     uint64_t attacks = 0ULL;
@@ -58,29 +66,33 @@ uint64_t get_rook_attacks(int square, uint64_t occupancy) {
 
     // left
     for (int i = col - 1; i >= 0; i--) {
-        attacks |= (1ULL << (row * 8 + i));
-        if (occupancy & (1ULL << (row * 8 + i))) {
+        uint64_t bb = square_bitboard(row * 8 + i);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
     // right
     for (int i = col + 1; i < 8; i++) {
-        attacks |= (1ULL << (row * 8 + i));
-        if (occupancy & (1ULL << (row * 8 + i))) {
+        uint64_t bb = square_bitboard(row * 8 + i);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
     // up
     for (int i = row - 1; i >= 0; i--) {
-        attacks |= (1ULL << (i * 8 + col));
-        if (occupancy & (1ULL << (i * 8 + col))) {
+        uint64_t bb = square_bitboard(i * 8 + col);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
     // down
     for (int i = row + 1; i < 8; i++) {
-        attacks |= (1ULL << (i * 8 + col));
-        if (occupancy & (1ULL << (i * 8 + col))) {
+        uint64_t bb = square_bitboard(i * 8 + col);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
@@ -89,81 +101,8 @@ uint64_t get_rook_attacks(int square, uint64_t occupancy) {
 }
 
 
-uint64_t random_U64() {
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint64_t> dist(0, ~0ULL);
-    return dist(gen);
-}
-
-// generate perfect hash function for occupancies to rook attack index through brute force
-uint64_t find_rook_magic_number(int square) {
-    int relevant_bits = 12; // max relevant bits that can block rook attacks
-    std::vector<uint64_t> occupancies = get_all_occupancies(get_rook_mask(square));
-    std::unordered_map<uint64_t, uint64_t> attack_table;
-
-    while (true) {
-        uint64_t magic = random_U64() & random_U64() & random_U64(); // sparse
-
-        if (__builtin_popcountll((magic * 0x7EDD5E59A4E28E5B) & 0xFF00000000000000) < 6) {
-            continue; // heuristic
-        }
-            
-        bool found = true;
-        attack_table.clear();
-
-        for (uint64_t o : occupancies) {
-            uint64_t index = (o * magic) >> (64 - relevant_bits);
-            uint64_t attacks = get_rook_attacks(square, o);
-
-            if (attack_table.count(index) && attack_table[index] != attacks) {
-                found = false;
-                break;
-            } else {
-                attack_table[index] = attacks;
-            }
-        }
-
-        if (found) {
-            return magic;
-        }
-    }
-}
-
-
-/*
-int main() {
-    // find magic numbers to hard code into main code
-
-    for (int square = 0; square < 64; square++) {
-        printf("0x%llx, \n", find_rook_magic_number(square));
-    }
-
-    return 0;
-}
-*/
-
-uint64_t rook_magic_numbers[64] = {
-    0x418000122086c000, 0x80200084104000, 0x40041088a00040, 0x10080104000201,
-    0x3001022040800111, 0x4140010010820040, 0x1040040e40090080, 0x480148000402100,
-    0x3004800180144000, 0x8028901924024000, 0x4818400428040811, 0x921000820800210,
-    0x520801008000112, 0x1000220104008010, 0x1022101002506002, 0x9300108100020,
-    0x4004808000904020, 0x102881400aa0611, 0x42002408020, 0x80041c004408800,
-    0x21200808000340, 0x801481000840, 0xa40200400403108, 0x20000228403,
-    0x4050a210020800, 0x2444020c0300, 0x140060082000, 0x10200c42001200,
-    0x5020812100842804, 0x48010100082c0, 0x11402081040, 0x200084041000280,
-    0x2000800410200024, 0x4840240c3400, 0x818401000400804, 0x30080804110480,
-    0x13408001204020, 0x4a08040100100, 0xd0008a002000c0, 0xc028010040800822,
-    0x30104000808006, 0x8008420400408182, 0x82201400840040, 0x2100620040248100,
-    0x120404a800240488, 0x84883095000c2806, 0x4004098020001, 0x21240084c010,
-    0x61158004400008, 0x34002020900008c0, 0xa06004400402, 0x61001000a20110,
-    0x5008100c0100, 0x20202008c200080, 0xc21000a00011044, 0x800100002000d0,
-    0x11004080001021, 0x404110888029a2, 0x102804022069026, 0x8000200214100009,
-    0x8864200052012, 0x1003008028044209, 0x815013a903030042, 0x5045000480204211,
-};
-
-
 // same for bishops:
+
 uint64_t get_bishop_mask(int square) {
     uint64_t mask = 0ULL;
     int row = square / 8;
@@ -171,24 +110,23 @@ uint64_t get_bishop_mask(int square) {
 
     // top right
     for (int r = row + 1, c = col + 1; r < 7 && c < 7; r++, c++) {
-        mask |= (1ULL << (r * 8 + c));
+        mask |= square_bitboard(r * 8 + c);
     }
     // top left
     for (int r = row + 1, c = col - 1; r < 7 && c > 0; r++, c--) {
-        mask |= (1ULL << (r * 8 + c));
+        mask |= square_bitboard(r * 8 + c);
     }
     // bottom right
     for (int r = row - 1, c = col + 1; r > 0 && c < 7; r--, c++) {
-        mask |= (1ULL << (r * 8 + c));
+        mask |= square_bitboard(r * 8 + c);
     }
     // bottom left
     for (int r = row - 1, c = col - 1; r > 0 && c > 0; r--, c--) {
-        mask |= (1ULL << (r * 8 + c));
+        mask |= square_bitboard(r * 8 + c);
     }
 
     return mask;
 }
-
 
 uint64_t get_bishop_attacks(int square, uint64_t occupancy) {
     uint64_t attacks = 0ULL;
@@ -197,29 +135,33 @@ uint64_t get_bishop_attacks(int square, uint64_t occupancy) {
 
     // top right
     for (int r = row + 1, c = col + 1; r < 8 && c < 8; r++, c++) {
-        attacks |= (1ULL << (r * 8 + c));
-        if (occupancy & (1ULL << (r * 8 + c))) {
+        uint64_t bb = square_bitboard(r * 8 + c);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
     // top left
     for (int r = row + 1, c = col - 1; r < 8 && c >= 0; r++, c--) {
-        attacks |= (1ULL << (r * 8 + c));
-        if (occupancy & (1ULL << (r * 8 + c))) {
+        uint64_t bb = square_bitboard(r * 8 + c);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
     // bottom right
     for (int r = row - 1, c = col + 1; r >= 0 && c < 8; r--, c++) {
-        attacks |= (1ULL << (r * 8 + c));
-        if (occupancy & (1ULL << (r * 8 + c))) {
+        uint64_t bb = square_bitboard(r * 8 + c);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
     // bottom left
     for (int r = row - 1, c = col - 1; r >= 0 && c >= 0; r--, c--) {
-        attacks |= (1ULL << (r * 8 + c));
-        if (occupancy & (1ULL << (r * 8 + c))) {
+        uint64_t bb = square_bitboard(r * 8 + c);
+        attacks |= bb;
+        if (occupancy & bb) {
             break;
         }
     }
@@ -228,24 +170,39 @@ uint64_t get_bishop_attacks(int square, uint64_t occupancy) {
 }
 
 
-uint64_t find_bishop_magic_number(int square) {
-    int relevant_bits = 9;
-    std::vector<uint64_t> occupancies = get_all_occupancies(get_bishop_mask(square));
+static uint64_t random_U64() {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<uint64_t> dist(0, ~0ULL);
+    return dist(gen);
+}
+
+// generate perfect hash function for occupancies to rook/bishop attack index through brute force
+// values are hard-coded into main code
+static uint64_t find_magic_number(int square, bool rook) {
+    int relevant_bits; // max relevant bits that can block attacks
+    uint64_t mask;
+    if (rook) {
+        mask = get_rook_mask(square);
+        relevant_bits = 12;
+    } else {
+        // bishop
+        mask = get_bishop_mask(square);
+        relevant_bits = 9;
+    }
+
+    std::vector<uint64_t> occupancies = get_all_subsets(mask);
     std::unordered_map<uint64_t, uint64_t> attack_table;
 
     while (true) {
         uint64_t magic = random_U64() & random_U64() & random_U64(); // sparse
-
-        if (__builtin_popcountll((magic * 0x7EDD5E59A4E28E5B) & 0xFF00000000000000) < 6) {
-            continue; // heuristic
-        }
             
         bool found = true;
         attack_table.clear();
 
         for (uint64_t o : occupancies) {
             uint64_t index = (o * magic) >> (64 - relevant_bits);
-            uint64_t attacks = get_bishop_attacks(square, o);
+            uint64_t attacks = rook ? get_rook_attacks(square, o) : get_bishop_attacks(square, o);
 
             if (attack_table.count(index) && attack_table[index] != attacks) {
                 found = false;
@@ -262,32 +219,166 @@ uint64_t find_bishop_magic_number(int square) {
 }
 
 /*
+Ex:
 int main() {
-    // find magic numbers to hard code into main code
-
+    printf("rook:\n");
     for (int square = 0; square < 64; square++) {
-        printf("0x%llx, \n", find_bishop_magic_number(square));
+        if (square % 4 == 0) printf("\n");
+        printf("0x%llx, ", find_magic_number(square, true));
+    }
+
+    printf("\n\nbishop:\n");
+    for (int square = 0; square < 64; square++) {
+        if (square % 4 == 0) printf("\n");
+        printf("0x%llx, ", find_magic_number(square, false));
     }
 
     return 0;
 }
 */
 
-uint64_t bishop_magic_numbers[64] = {
-    0x10404e0140a812c, 0x300842401042080, 0x800a048080048112, 0x41004a0121002000,
-    0x901408010000, 0x4000802103004060, 0x24404a01400040, 0xa201a00b810500,
-    0x2202408061020206, 0x90220404200c5c1, 0x504c212100804, 0x80000a8080100004,
-    0x4203140000005, 0xc000844c20020000, 0x108001410002000, 0x820814010800,
-    0x4042200040a0, 0x20004684110c0c24, 0x800c14808210002, 0x1000020482000,
-    0x488100424027480, 0x8010220704004200, 0xc2040020844c1000, 0x882004042086,
-    0x28040101408083, 0x1c08008006d00448, 0x3000094291001421, 0x540040050410020,
-    0x8001010084504000, 0x8256028000082000, 0x2216201120448400, 0x202082409200400,
-    0x81801805003b800, 0x484800200020, 0x404200d000021100, 0x1108120084180080,
-    0x64008400080410, 0x4010e10214040, 0x4021004002090, 0x2088202408000600,
-    0x102001420008120, 0x411004812022000, 0x4202008400c0, 0x17004480220804,
-    0x20200600898040, 0x4080404401000120, 0x88225082120022, 0x1180008a1e80a58,
-    0x4182046a82014011, 0x808148050c201100, 0x4020481040111014, 0x4000002102421000,
-    0x214000006d00d017, 0x1a80a02028900800, 0x40120008a800402, 0x10a0b0010810800,
-    0x800400206500, 0x30411041200a6110, 0x2002000020100804, 0x802100020420028,
-    0x880408060540, 0x400804002004104, 0x102311a208008490, 0x244208400184010
-};
+
+// row and column mask by square, excluding edges
+uint64_t rook_masks[64];
+// precompute rook moves given square and board occupancy.
+// edges of the board can be excluded in occupancy because the rook must stop there.
+// this gives a max of 12 possible blockers per rook position. 2 ^ 12 = 4096.
+uint64_t rook_moves[64][4096];
+
+// similar for bishops
+uint64_t bishop_masks[64];
+uint64_t bishop_moves[64][512];
+
+// precomputed moves for each square
+uint64_t pawn_attacks[64][2];
+uint64_t knight_moves[64];
+uint64_t king_moves[64];
+
+// for square1 in check by square2, holds the squares that could block or capture the checker
+uint64_t check_blocks[64][64];
+
+void init_bitboards() {
+    std::vector<std::tuple<int ,int>> knight_dirs = {
+        {2,1}, {2,-1}, {-2,1}, {-2,-1}, {1,2}, {1,-2}, {-1,2}, {-1,-2}
+    };
+    std::vector<std::tuple<int ,int>> king_dirs = {
+        {1,0}, {-1,0}, {0,1}, {0,-1}, {1,1}, {-1,-1}, {1,-1}, {-1,1}
+    };
+
+    for (int square = 0; square < 64; square++) {
+        int row = square / 8;
+        int col = square % 8;
+
+        // knight moves
+        uint64_t moves = 0ULL;
+        for (auto d : knight_dirs) {
+            int new_row = row + std::get<0>(d);
+            int new_col = col + std::get<1>(d);
+            if (new_row >= 0 && new_row < 8 && new_col >= 0 && new_col < 8) {
+                moves |= square_bitboard(new_row * 8 + new_col);
+            }
+        }
+        knight_moves[square] = moves;
+        
+        // pawn attacks
+        uint64_t white_attacks = 0ULL;
+        uint64_t black_attacks = 0ULL;
+        if (col > 0) {
+            if (row > 0) {
+                white_attacks |= square_bitboard((row - 1) * 8 + (col - 1));
+            }
+            if (row < 7) {
+                black_attacks |= square_bitboard((row + 1) * 8 + (col - 1));
+            }
+        }
+        if (col < 7) {
+            if (row > 0) {
+                white_attacks |= square_bitboard((row - 1) * 8 + (col + 1));
+            }
+            if (row < 7) {
+                black_attacks |= square_bitboard((row + 1) * 8 + (col + 1));
+            }
+        }
+        pawn_attacks[square][WHITE] = white_attacks;
+        pawn_attacks[square][BLACK] = black_attacks;
+
+        // king moves
+        moves = 0ULL;
+        for (auto d : king_dirs) {
+            int new_row = row + std::get<0>(d);
+            int new_col = col + std::get<1>(d);
+            if (new_row >= 0 && new_row < 8 && new_col >= 0 && new_col < 8) {
+                moves |= square_bitboard(new_row * 8 + new_col);
+            }
+        }
+        king_moves[square] = moves;
+
+        // rook moves
+        rook_masks[square] = get_rook_mask(square);
+        std::vector<uint64_t> occupancies = get_all_subsets(rook_masks[square]);
+        for (uint64_t occ : occupancies) {
+            uint64_t index = (occ * rook_magic_numbers[square]) >> (64 - 12);
+            rook_moves[square][index] = get_rook_attacks(square, occ);
+        }
+
+        // bishop moves
+        bishop_masks[square] = get_bishop_mask(square);
+        occupancies = get_all_subsets(bishop_masks[square]);
+        for (uint64_t occ : occupancies) {
+            uint64_t index = (occ * bishop_magic_numbers[square]) >> (64 - 9);
+            bishop_moves[square][index] = get_bishop_attacks(square, occ);
+        }
+    }
+
+    // check blocks
+    for (int s1 = 0; s1 < 64; s1++) {
+        for (int s2 = 0; s2 < 64; s2++) {
+            if (get_bishop_moves(s1, 0ULL) & square_bitboard(s2)) {
+                check_blocks[s1][s2] = get_bishop_moves(s1, square_bitboard(s2)) &
+                                       get_bishop_moves(s2, square_bitboard(s1));
+            } else if (get_rook_moves(s1, 0ULL) & square_bitboard(s2)) {
+                check_blocks[s1][s2] = get_rook_moves(s1, square_bitboard(s2)) &
+                                       get_rook_moves(s2, square_bitboard(s1));
+            } else {
+                check_blocks[s1][s2] = 0ULL;
+            }
+
+            // capture the checker
+            check_blocks[s1][s2] |= square_bitboard(s2);
+        }
+    }
+}
+
+
+uint64_t get_check_blocks(int s1, int s2) {
+    return check_blocks[s1][s2];
+}
+
+
+uint64_t get_pawn_attacks(int square, int color) {
+    return pawn_attacks[square][color];
+}
+
+uint64_t get_knight_moves(int square) {
+    return knight_moves[square];
+}
+
+uint64_t get_king_moves(int square) {
+    return king_moves[square];
+}
+
+uint64_t get_bishop_moves(int square, uint64_t blockers) {
+    blockers &= bishop_masks[square];
+    uint64_t index = (blockers * bishop_magic_numbers[square]) >> (64 - 9);
+    return bishop_moves[square][index];
+}
+
+uint64_t get_rook_moves(int square, uint64_t blockers) {
+    blockers &= rook_masks[square];
+    uint64_t index = (blockers * rook_magic_numbers[square]) >> (64 - 12);
+    return rook_moves[square][index];
+}
+
+uint64_t get_queen_moves(int square, uint64_t blockers) {
+    return get_bishop_moves(square, blockers) | get_rook_moves(square, blockers);
+}

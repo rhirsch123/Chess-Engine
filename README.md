@@ -1,24 +1,25 @@
 # Chess Engine
 
 ### Usage
-To play engine with GUI:  
+To play engine with built-in GUI:  
 pip install pygame  
-Optional: edit main.cc file to play white/black, set time format, set custum position, etc.  
 make  
-./main  
+./main
+
+Or install other tools and use the uci executable
 
 ### Strength
-~3200 ELO
+~3400 ELO
 
 ### Features
-- [NNUE](https://www.chessprogramming.org/NNUE) (Efficiently Updatable Neural Network) used to evaluate positions
-  - Trained on data from [Lc0](https://github.com/LeelaChessZero/lc0) (deep NN based engine)
-- [Bitboard](https://www.chessprogramming.org/Bitboards) representation (including magic bitboards for sliding pieces) for fast move generation
-- [Negamax](https://www.chessprogramming.org/Negamax) search with [alpha-beta pruning](https://www.chessprogramming.org/Alpha-Beta) and [iterative deepening](https://www.chessprogramming.org/Iterative_Deepening).
-- [Move ordering](https://www.chessprogramming.org/Move_Ordering) heuristics: history, hash move, MVV-LVA, etc.
-- Search heuristics: [late move reduction](https://www.chessprogramming.org/Late_Move_Reductions), [null move pruning](https://www.chessprogramming.org/Null_Move_Pruning), [futility pruning](https://www.chessprogramming.org/Futility_Pruning), etc.
-- [Zobrist hashing](https://www.chessprogramming.org/Zobrist_Hashing)
-- [Transposition table](https://www.chessprogramming.org/Transposition_Table): store information learned about a position to avoid re-searching it.
-- [Opening book](https://www.chessprogramming.org/Opening_Book) support: play random opening from database so it is not deterministic.
+- NNUE (Efficiently Updatable Neural Network) used to evaluate positions
+  - Optimized inference with SIMD instructions
+  - Trained in pytorch on data from [Lc0](https://github.com/LeelaChessZero/lc0)
+- Bitboard representation with magic bitboards for fast move generation
+- Negamax search with alpha-beta pruning and iterative deepening
+- Move ordering heuristics: hash move, history, etc.
+- Search heuristics: late move reduction, null move pruning, futility pruning, etc.
+- Zobrist hashing
+- Transposition table: store information learned about a position to avoid re-searching it.
 - GUI: run in python
 - UCI support

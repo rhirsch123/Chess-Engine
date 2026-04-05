@@ -8,6 +8,7 @@
 #include <fcntl.h>
 
 #include "position.hh"
+#include "movegen.hh"
 #include "move.hh"
 #include "engine.hh"
 
@@ -15,9 +16,26 @@
 #define FIFO_P_TO_C "python_to_cpp"
 
 
-int get_int(char c) {
+static int get_int(char c) {
     return c - '0';
 }
+
+static int char_to_piece(char c) {
+        if (c == 'Q') {
+            return QUEEN;
+        } else if (c == 'R') {
+            return ROOK;
+        } else if (c == 'N') {
+            return KNIGHT;
+        } else if (c == 'B') {
+            return BISHOP; 
+        } else if (c == 'P') {
+            return PAWN;
+        } else if (c == 'K') {
+            return KING;
+        }
+        return -1;
+    }
 
 Move move_from_str(std::string move) {
     // format: <row1><col1><row2><col2><promotion or 'X'>
@@ -31,7 +49,7 @@ Move move_from_str(std::string move) {
     if (promote_to == 'X') {
         promotion_piece = 0;
     } else {
-        promotion_piece = Position::char_to_piece(promote_to);
+        promotion_piece = char_to_piece(promote_to);
     }
     return Move(r1 * 8 + c1, r2 * 8 + c2, promotion_piece);
 }
@@ -58,24 +76,9 @@ void write_to_pipe(std::string message) {
 int main() {
     std::string playing = "white";
 
-    std::string nnue = "nnue/nnue.bin";
+    Position position;
+    Engine engine;
 
-    /* int init_board[8][8] = {
-        {BLACK_ROOK, 0, 0, 0, BLACK_ROOK, 0, BLACK_KING, 0},
-        {BLACK_PAWN, BLACK_PAWN, 0, 0, 0, BLACK_PAWN, BLACK_BISHOP, BLACK_PAWN},
-        {0, BLACK_QUEEN, BLACK_PAWN, 0, 0, 0, BLACK_PAWN, 0},
-        {0, 0, WHITE_BISHOP, 0, 0, 0, 0, 0},
-        {0, 0, WHITE_BISHOP, WHITE_PAWN, 0, 0, BLACK_BISHOP, 0},
-        {WHITE_QUEEN, 0, BLACK_KNIGHT, 0, 0, WHITE_KNIGHT, 0, 0},
-        {WHITE_PAWN, 0, 0, 0, 0, WHITE_PAWN, WHITE_PAWN, WHITE_PAWN},
-        {0, 0, 0, WHITE_ROOK, 0, WHITE_KING, 0, WHITE_ROOK}
-    }; 
-    Position position(init_board, BLACK, nnue); */
-   
-    Position position(nnue);
-    Engine engine(1000, true);
-
-    
     int pid = fork();
     if (pid < 0) {
         perror("fork failed");
@@ -99,39 +102,52 @@ int main() {
         if (command == "get position") {
             std::ostringstream buffer;
             for (int i = 0; i < 64; i++) {
-                buffer << position.board[i / 8][i % 8] << '\n';
+                buffer << (int) position.board[i] << '\n';
             }
             buffer << (position.turn == WHITE ? "white\n" : "black\n");
             write_to_pipe(buffer.str());
 
         } else if (command == "get playing") {
             write_to_pipe(playing);
-            
-        } else if (command == "get time") {
-            if (engine.timed_game) {
-                write_to_pipe(std::to_string(engine.minutes) + '\n' + std::to_string(engine.increment));
-            } else {
-                write_to_pipe("0\n0\n");
-            }
+
         } else if (command == "get legal moves") {
             std::ostringstream buffer;
-            for (auto move : position.get_legal_moves()) {
+
+            MoveList legals;
+            get_legal_moves(position, &legals);
+            for (Move move : legals) {
                 buffer << move.toString() << '\n';
             }
+            
             write_to_pipe(buffer.str());
 
         } else if (command == "update") {
             position.make_move(move_from_str(rest));
 
         } else if (command == "make move") {    
-            Move engine_move = engine.get_move(position, true);
+            Move engine_move = engine.get_move(position);
 
             write_to_pipe(engine_move.toString());
             position.make_move(engine_move);
         
         } else if (command == "get terminal state") {
             usleep(10000);
-            write_to_pipe(position.get_terminal_state());
+            TerminalState state = position.get_terminal_state();
+            if (state == WHITE_MATE) {
+                write_to_pipe("white wins");
+            } else if (state == BLACK_MATE) {
+                write_to_pipe("black wins");
+            } else if (state == STALEMATE) {
+                write_to_pipe("stalemate");
+            } else if (state == FIFTY_MOVE_RULE) {
+                write_to_pipe("50 move rule");
+            } else if (state == THREEFOLD_REPETITION) {
+                write_to_pipe("threefold repetition");
+            } else if (state == INSUFFICIENT_MATERIAL) {
+                write_to_pipe("insufficient material");
+            } else {
+                write_to_pipe("");
+            }
 
         } else if (command == "exit") {
             waitpid(pid, NULL, 0);

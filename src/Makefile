@@ -1,20 +1,23 @@
 CC = g++
-CFLAGS = -std=c++17 -g -O3 -flto
+CFLAGS = -std=c++17 -O3 -flto -funroll-loops -march=native
 
-SRCS = position.cc move_generator.cc engine.cc evaluation.cc zobrist.cc bitboards.cc polyglot.cc nnue/nnue.cc
+SRCS = position.cc engine.cc zobrist.cc bitboards.cc movegen.cc movepick.cc polyglot.cc nnue/nnue.cc
 OBJS = $(SRCS:.cc=.o)
 
-TARGETS = main perft uci
+TARGETS = main uci perft bench
 
 all: $(TARGETS)
 
 main: main.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
+uci: uci.o $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^
+
 perft: perft.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
-uci: uci.o $(OBJS)
+bench: bench.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.cc

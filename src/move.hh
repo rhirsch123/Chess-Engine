@@ -2,21 +2,21 @@
 #define move_hh
 
 #include <sstream>
+#include <cstdint>
 
 // important for move data to be compact for transposition table.
-// 4 bits for promotion (enum piece_type), 6 bits for from_square, 6 bits for to_square
+// 4 bits for promotion (PieceType), 6 bits for from_square, 6 bits for to_square
 class Move {
 public:
-    int exchange;
     uint16_t move;
 
-    Move() : move(0), exchange(0) {}
+    Move() : move(0) {}
     
-    Move(uint8_t from_square, uint8_t to_square, uint8_t promote_to = 0, int exchange = 0) : exchange(exchange) {
+    Move(uint8_t from_square, uint8_t to_square, uint8_t promote_to = 0) {
         move = (promote_to << 12) | (from_square << 6) | to_square;
     }
 
-    Move(uint16_t move_data) : move(move_data), exchange(0) {}
+    Move(uint16_t move_data) : move(move_data) {}
 
     Move(std::string uci_move) {
         int from_col = uci_move[0] - 'a';
@@ -37,37 +37,37 @@ public:
         move = (promotion << 12) | (from_square << 6) | to_square;
     }
 
-    int from() const {
+    inline int from() const {
         return (move >> 6) & 0x3F;
     }
 
-    int to() const {
+    inline int to() const {
         return move & 0x3F;
     }
 
-    int promote_to() const {
+    inline int promote_to() const {
         return (move >> 12) & 0xF;
     }
 
-    int start_row() const {
+    inline int from_row() const {
         return from() / 8;
     }
 
-    int start_col() const {
+    inline int from_col() const {
         return from() % 8;
     }
 
-    int end_row() const {
+    inline int to_row() const {
         return to() / 8;
     }
 
-    int end_col() const {
+    inline int to_col() const {
         return to() % 8;
     }
 
     std::string toString() const {
         std::stringstream ss;
-        ss  << start_row() << start_col() << end_row() << end_col();
+        ss  << from_row() << from_col() << to_row() << to_col();
         int promotion = promote_to();
         if (promotion == 1) {
             ss << 'N';
@@ -88,10 +88,10 @@ public:
             return "0000";
         }
 
-        int start_rank = 8 - start_row();
-        char start_file = 'a' + start_col();
-        int end_rank = 8 - end_row();
-        char end_file = 'a' + end_col();
+        int start_rank = 8 - from_row();
+        char start_file = 'a' + from_col();
+        int end_rank = 8 - to_row();
+        char end_file = 'a' + to_col();
 
         std::string uci_move = start_file + std::to_string(start_rank) +
             end_file + std::to_string(end_rank);

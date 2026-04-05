@@ -4,17 +4,16 @@
 #include <cstdint>
 #include <random>
 
-class Zobrist {
-public:
-    uint64_t piece_table[12][64];
-    uint64_t castle_table[4];
-    uint64_t en_passant_table[8];
-    uint64_t turn_key;
+#include "types.hh"
 
-    Zobrist();
+namespace Zobrist {    
+    extern uint64_t piece_table[12][64];
+    extern uint64_t castle_table[4];
+    extern uint64_t en_passant_table[8];
+    extern uint64_t turn_key;
 
-    uint64_t hash_position(const int board[8][8], int turn,
-        const bool can_castle[4], int en_passant_col);
+    void init();
+    uint64_t get_hash(uint8_t board[64], int castle_rights, int ep_col, int turn);
 };
 
 #endif

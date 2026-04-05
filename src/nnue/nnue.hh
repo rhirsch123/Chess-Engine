@@ -6,43 +6,88 @@
 #include <fstream>
 #include <cmath>
 #include <cstring>
+#include <cstdint>
+#include <filesystem>
 
-
-// SIMD optimizations
-#if __ARM_NEON && __aarch64__
-    #define USE_NEON
-    #include "arm_neon.h"
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #endif
 
+#include "../types.hh"
+#include "../position.hh"
+#include "simd.hh"
+
 #define INPUT_SIZE 768  // 64 squares * 6 pieces * 2 colors
-#define HIDDEN_SIZE 1024 // arbitrary
-#define OUTPUT_BUCKETS 8 // different output weights depending on piece count
+#define L1_SIZE 1536
+#define L2_SIZE 16
+#define L3_SIZE 32
 
 // commonly used values for nnue
 #define SCALE 400
-#define QA 255 // hidden layer quantization
-#define QB 64 // output quantization
+#define QA 255 // layer 1 quantization
+#define QB 64 // layer 2 quantization
 
-#ifdef USE_NEON
-const int16x8_t zero = vdupq_n_s16(0);
-const int16x8_t max  = vdupq_n_s16(QA);
-#endif
+class Position;
 
 namespace NNUE {
-    extern int16_t hidden_weights[INPUT_SIZE][HIDDEN_SIZE];
-    extern int16_t hidden_biases[HIDDEN_SIZE];
-    extern int16_t output_weights_stm[OUTPUT_BUCKETS][HIDDEN_SIZE];
-    extern int16_t output_weights_opp[OUTPUT_BUCKETS][HIDDEN_SIZE];
-    extern int16_t output_bias[OUTPUT_BUCKETS];
-    extern int16_t accumulators[2][HIDDEN_SIZE];
+    const std::string nnue_file = "nnue.bin";
 
-    void init(std::string weights_file);
+    enum DirtyType {
+        QUIET,
+        CAPTURE,
+        CASTLE,
+        PROMOTION,
+        EN_PASSANT,
+        CAP_PROMO,
+        NONE
+    };
 
-    int black_index(int square, int piece);
-    int get_output_bucket(uint64_t occupancy);
+    struct DirtyPieces {
+        int white_add0;
+        int black_add0;
+        int white_sub0;
+        int black_sub0;
+        int white_add1;
+        int black_add1;
+        int white_sub1;
+        int black_sub1;
 
-    int evaluate(int board[8][8], int turn, int output_bucket);
-    int evaluate_incremental(int turn, int output_bucket);
+        DirtyType type;
+    };
+
+    struct AccInfo {
+        DirtyPieces dps;
+        bool clean;
+    };
+
+    
+    void init();
+
+    // chess is horizontally invariant, so the network is trained with each
+    // perspective's king always on the left to reduce the state space
+    static inline bool is_mirrored(int king_square) {
+        return (king_square % 8) > 3;
+    }
+
+    static inline int white_index(int square, int piece, bool mirror) {
+        return (square ^ (mirror * 0b111)) * 12 + piece - 1;
+    }
+    static inline int black_index(int square, int piece, bool mirror) {
+        // flip square vertically, flip piece color
+        return (square ^ 0b111000 ^ (mirror * 0b111)) * 12 + (piece <= 6 ? piece + 5 : piece - 7);
+    }
+
+    void reset_accumulators(Position& position);
+    void set_dirty(int ply, DirtyPieces& dps);
+    void update_accumulators(int ply);
+    void clean_accumulators(int ply);
+
+    void set_active(int ply);
+
+    int evaluate(Position& position);
+    int evaluate_incremental(int ply, int turn);
 };
 
 #endif
