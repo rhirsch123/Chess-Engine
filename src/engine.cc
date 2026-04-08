@@ -656,7 +656,7 @@ Move Engine::get_move(Position& position, SearchInfo info) {
 
         if (mate_score(eval)) {
             if (std::abs(MATE_SCORE - eval) <= 1) printf("evaluation: checkmate\n");
-            else if (eval > 0) printf("evaluation: M%d\n", (MATE_SCORE - eval + 1) / 2);
+            else if (eval > 0) printf("evaluation: M%d\n", (MATE_SCORE - eval) / 2);
             else printf("evaluation: -M%d\n", std::abs(-MATE_SCORE - eval) / 2);
         }
         else printf("evaluation: %d\n", eval);

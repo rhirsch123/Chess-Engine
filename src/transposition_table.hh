@@ -9,7 +9,7 @@
 #include "types.hh"
 
 class TranspositionTable {
-    TTEntry * table = NULL;
+    TTEntry* table = nullptr;
     size_t size = 0;
 
 public:
@@ -38,7 +38,7 @@ public:
 
     void insert(uint64_t key, int16_t value, int16_t static_eval, uint16_t best_move, TTBound type, int8_t depth) {
         TTEntry entry = {
-            (uint16_t) key,
+            uint16_t(key),
             value,
             static_eval,
             best_move,
@@ -61,7 +61,7 @@ public:
         const uint64_t index = get_index(key);
         const TTEntry& candidate = table[index];
 
-        if (candidate.key && candidate.key == (uint16_t) key) {
+        if (candidate.key && candidate.key == uint16_t(key)) {
             entry = candidate;
             return true;
         }

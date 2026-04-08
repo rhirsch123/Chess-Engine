@@ -136,18 +136,17 @@ namespace NNUE {
         bool white_mirror = is_mirrored(white_king);
         bool black_mirror = is_mirrored(black_king);
 
-        for (int square = 0; square < 64; square++) {
+        uint64_t pieces = position.pieces();
+        while (pieces) {
+            int square = pop_lsb(pieces);
             int piece = position.board[square];
-            if (piece) {
-                int white_idx = white_index(square, piece, white_mirror);
-                int black_idx = black_index(square, piece, black_mirror);
 
-                for (int j = 0; j < L1_SIZE; j++) {
-                    accumulators[ply][WHITE][j] += l1_weights[white_idx][j];
-                }
-                for (int j = 0; j < L1_SIZE; j++) {
-                    accumulators[ply][BLACK][j] += l1_weights[black_idx][j];
-                }
+            int white_idx = white_index(square, piece, white_mirror);
+            int black_idx = black_index(square, piece, black_mirror);
+
+            for (int j = 0; j < L1_SIZE; j++) {
+                accumulators[ply][WHITE][j] += l1_weights[white_idx][j];
+                accumulators[ply][BLACK][j] += l1_weights[black_idx][j];
             }
         }
 
@@ -212,6 +211,67 @@ namespace NNUE {
         }
 
         return output * (float) SCALE / (QA * QB);
+    }
+
+
+    void set_dirty(int ply, DirtyPieces& dps) {
+        acc_info[ply].dps = dps;
+        acc_info[ply].clean = false;
+    }
+
+
+    // efficiently update accumulator - only have to worry about the few indices that changed this move
+    void update_accumulators(int ply) {
+        acc_info[ply].clean = true;
+        DirtyPieces &dps = acc_info[ply].dps;
+
+        int16_t* acc_white = accumulators[ply][WHITE];
+        int16_t* acc_black = accumulators[ply][BLACK];
+        int16_t* prev_white = accumulators[ply - 1][WHITE];
+        int16_t* prev_black = accumulators[ply - 1][BLACK];
+
+        // compilers should vectorize this automatically
+        if (dps.type == QUIET || dps.type == PROMOTION) {
+            // add sub
+            for (int i = 0; i < L1_SIZE; i++) {
+                acc_white[i] = prev_white[i] + l1_weights[dps.white_add0][i] - l1_weights[dps.white_sub0][i];
+                acc_black[i] = prev_black[i] + l1_weights[dps.black_add0][i] - l1_weights[dps.black_sub0][i];
+            }
+        } else if (dps.type == CAPTURE || dps.type == CAP_PROMO || dps.type == EN_PASSANT) {
+            // add sub sub
+            for (int i = 0; i < L1_SIZE; i++) {
+                acc_white[i] = prev_white[i]
+                  + l1_weights[dps.white_add0][i] - l1_weights[dps.white_sub0][i] - l1_weights[dps.white_sub1][i];
+                acc_black[i] = prev_black[i]
+                  + l1_weights[dps.black_add0][i] - l1_weights[dps.black_sub0][i] - l1_weights[dps.black_sub1][i];
+            }
+        } else if (dps.type == CASTLE) {
+            // add add sub sub
+            for (int i = 0; i < L1_SIZE; i++) {
+                acc_white[i] = prev_white[i]
+                  + l1_weights[dps.white_add0][i] + l1_weights[dps.white_add1][i]
+                  - l1_weights[dps.white_sub0][i] - l1_weights[dps.white_sub1][i];
+                acc_black[i] = prev_black[i]
+                  + l1_weights[dps.black_add0][i] + l1_weights[dps.black_add1][i]
+                  - l1_weights[dps.black_sub0][i] - l1_weights[dps.black_sub1][i];
+            }
+        } else {
+            // null move
+            std::memcpy(acc_white, prev_white, L1_SIZE * sizeof(int16_t));
+            std::memcpy(acc_black, prev_black, L1_SIZE * sizeof(int16_t));
+        }
+    }
+
+
+    void clean_accumulators(int ply) {
+        int last_clean = ply;
+        while (!acc_info[last_clean].clean) {
+            last_clean--;
+        }
+
+        for (int i = last_clean + 1; i <= ply; i++) {
+            update_accumulators(i);
+        }
     }
 
 
@@ -338,67 +398,6 @@ namespace NNUE {
         }
 
     #endif
-    }
-
-
-    void set_dirty(int ply, DirtyPieces& dps) {
-        acc_info[ply].dps = dps;
-        acc_info[ply].clean = false;
-    }
-
-
-    // efficiently update accumulator - only have to worry about the few indices that changed this move
-    void update_accumulators(int ply) {
-        acc_info[ply].clean = true;
-        DirtyPieces dps = acc_info[ply].dps;
-
-        int16_t* acc_white = accumulators[ply][WHITE];
-        int16_t* acc_black = accumulators[ply][BLACK];
-        int16_t* prev_white = accumulators[ply - 1][WHITE];
-        int16_t* prev_black = accumulators[ply - 1][BLACK];
-
-        // compilers should vectorize this automatically
-        if (dps.type == QUIET || dps.type == PROMOTION) {
-            // add sub
-            for (int i = 0; i < L1_SIZE; i++) {
-                acc_white[i] = prev_white[i] + l1_weights[dps.white_add0][i] - l1_weights[dps.white_sub0][i];
-                acc_black[i] = prev_black[i] + l1_weights[dps.black_add0][i] - l1_weights[dps.black_sub0][i];
-            }
-        } else if (dps.type == CAPTURE || dps.type == CAP_PROMO || dps.type == EN_PASSANT) {
-            // add sub sub
-            for (int i = 0; i < L1_SIZE; i++) {
-                acc_white[i] = prev_white[i]
-                  + l1_weights[dps.white_add0][i] - l1_weights[dps.white_sub0][i] - l1_weights[dps.white_sub1][i];
-                acc_black[i] = prev_black[i]
-                  + l1_weights[dps.black_add0][i] - l1_weights[dps.black_sub0][i] - l1_weights[dps.black_sub1][i];
-            }
-        } else if (dps.type == CASTLE) {
-            // add add sub sub
-            for (int i = 0; i < L1_SIZE; i++) {
-                acc_white[i] = prev_white[i]
-                  + l1_weights[dps.white_add0][i] + l1_weights[dps.white_add1][i]
-                  - l1_weights[dps.white_sub0][i] - l1_weights[dps.white_sub1][i];
-                acc_black[i] = prev_black[i]
-                  + l1_weights[dps.black_add0][i] + l1_weights[dps.black_add1][i]
-                  - l1_weights[dps.black_sub0][i] - l1_weights[dps.black_sub1][i];
-            }
-        } else {
-            // null move
-            std::memcpy(acc_white, prev_white, L1_SIZE * sizeof(int16_t));
-            std::memcpy(acc_black, prev_black, L1_SIZE * sizeof(int16_t));
-        }
-    }
-
-
-    void clean_accumulators(int ply) {
-        int last_clean = ply;
-        while (!acc_info[last_clean].clean) {
-            last_clean--;
-        }
-
-        for (int i = last_clean + 1; i <= ply; i++) {
-            update_accumulators(i);
-        }
     }
 
 

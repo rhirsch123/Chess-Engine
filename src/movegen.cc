@@ -365,7 +365,7 @@ uint64_t get_piece_moves(Position& position, int square) {
         return captures | pushes | en_passant;
     }
     if (piece_type == QUEEN) {
-        return (get_rook_moves(square, all_pieces) | get_bishop_moves(square, all_pieces)) & (~friendly_pieces);
+        return get_queen_moves(square, all_pieces) & (~friendly_pieces);
     }
     if (piece_type == ROOK) {
         return get_rook_moves(square, all_pieces) & (~friendly_pieces);
