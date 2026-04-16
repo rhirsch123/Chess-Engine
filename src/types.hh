@@ -12,6 +12,8 @@
 // max search depth
 #define MAX_DEPTH 64
 
+#define MAX_MOVES 256
+
 typedef std::chrono::time_point<std::chrono::high_resolution_clock> time_point;
 
 struct SearchInfo {
@@ -37,6 +39,8 @@ struct SearchInfo {
     bool verbose = false;
     std::atomic<bool>* stop_search = nullptr;
 };
+
+static int piece_values[6] = { 100, 313, 339, 546, 944, 0 };
 
 enum Piece : uint8_t {
     WHITE_PAWN = 1,

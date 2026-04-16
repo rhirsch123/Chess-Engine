@@ -9,8 +9,6 @@
 class Position;
 
 struct MoveList {
-    static constexpr int MAX_MOVES = 256;
-
     Move moves[MAX_MOVES];
     int size;
 

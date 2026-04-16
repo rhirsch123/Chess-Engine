@@ -25,7 +25,7 @@ struct ScoredMove {
 };
 
 struct ScoredMoveList {
-    ScoredMove list[MoveList::MAX_MOVES];
+    ScoredMove list[MAX_MOVES];
     int size;
 
     ScoredMoveList() : size(0) {}

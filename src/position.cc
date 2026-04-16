@@ -60,9 +60,9 @@ void Position::set_fen(std::string fen) {
             int color = get_color(piece);
 
             if (color == WHITE) {
-                white_material += values[piece_type];
+                white_material += piece_values[piece_type];
             } else {
-                black_material += values[piece_type];
+                black_material += piece_values[piece_type];
             }
 
             piece_maps[piece_type][color] |= square_bitboard(square);
@@ -183,10 +183,10 @@ void Position::make_move(Move move) {
     bool white_mirror = NNUE::is_mirrored(white_king);
     bool black_mirror = NNUE::is_mirrored(black_king);
 
-    dps.white_sub0 = NNUE::white_index(start_square, piece, white_mirror);
-    dps.black_sub0 = NNUE::black_index(start_square, piece, black_mirror);
-    dps.white_add0 = NNUE::white_index(end_square, piece, white_mirror);
-    dps.black_add0 = NNUE::black_index(end_square, piece, black_mirror);
+    dps.white_sub0 = NNUE::make_index<WHITE>(start_square, piece, white_mirror);
+    dps.black_sub0 = NNUE::make_index<BLACK>(start_square, piece, black_mirror);
+    dps.white_add0 = NNUE::make_index<WHITE>(end_square, piece, white_mirror);
+    dps.black_add0 = NNUE::make_index<BLACK>(end_square, piece, black_mirror);
 
     board[start_square] = 0;
     hash_value ^= Zobrist::piece_table[piece - 1][start_square];
@@ -202,9 +202,9 @@ void Position::make_move(Move move) {
         piece_maps[capture_type][!turn] &= ~square_bitboard(end_square);
 
         if (turn == WHITE) {
-            black_material -= values[capture_type];
+            black_material -= piece_values[capture_type];
         } else {
-            white_material -= values[capture_type];
+            white_material -= piece_values[capture_type];
         }
 
         // update castle
@@ -227,8 +227,8 @@ void Position::make_move(Move move) {
         }
 
         type = NNUE::CAPTURE;
-        dps.white_sub1 = NNUE::white_index(end_square, capture, white_mirror);
-        dps.black_sub1 = NNUE::black_index(end_square, capture, black_mirror);
+        dps.white_sub1 = NNUE::make_index<WHITE>(end_square, capture, white_mirror);
+        dps.black_sub1 = NNUE::make_index<BLACK>(end_square, capture, black_mirror);
     }
 
     int promotion = move.promote_to();
@@ -243,9 +243,9 @@ void Position::make_move(Move move) {
         piece_maps[piece_type][turn] &= ~square_bitboard(end_square);
 
         if (turn == WHITE) {
-            white_material += values[promotion] - values[PAWN];
+            white_material += piece_values[promotion] - piece_values[PAWN];
         } else {
-            black_material += values[promotion] - values[PAWN];
+            black_material += piece_values[promotion] - piece_values[PAWN];
         }
 
         if (capture) {
@@ -253,8 +253,8 @@ void Position::make_move(Move move) {
         } else {
             type = NNUE::PROMOTION;
         }
-        dps.white_add0 = NNUE::white_index(end_square, new_piece, white_mirror);
-        dps.black_add0 = NNUE::black_index(end_square, new_piece, black_mirror);
+        dps.white_add0 = NNUE::make_index<WHITE>(end_square, new_piece, white_mirror);
+        dps.black_add0 = NNUE::make_index<BLACK>(end_square, new_piece, black_mirror);
 
     } else if (piece_type == KING && std::abs(start_col - end_col) > 1) {
         // castle
@@ -284,10 +284,10 @@ void Position::make_move(Move move) {
         piece_maps[ROOK][turn] &= ~square_bitboard(rook_start);
         piece_maps[ROOK][turn] |= square_bitboard(rook_end);
 
-        dps.white_sub1 = NNUE::white_index(rook_start, rook, white_mirror);
-        dps.black_sub1 = NNUE::black_index(rook_start, rook, black_mirror);
-        dps.white_add1 = NNUE::white_index(rook_end, rook, white_mirror);
-        dps.black_add1 = NNUE::black_index(rook_end, rook, black_mirror);
+        dps.white_sub1 = NNUE::make_index<WHITE>(rook_start, rook, white_mirror);
+        dps.black_sub1 = NNUE::make_index<BLACK>(rook_start, rook, black_mirror);
+        dps.white_add1 = NNUE::make_index<WHITE>(rook_end, rook, white_mirror);
+        dps.black_add1 = NNUE::make_index<BLACK>(rook_end, rook, black_mirror);
 
     } else if (piece_type == PAWN && start_col != end_col && !board[end_square]) {
         // en passant
@@ -302,14 +302,14 @@ void Position::make_move(Move move) {
         // clear capture
         if (turn == WHITE) {
             piece_maps[PAWN][BLACK] &= ~square_bitboard(capture_square);
-            black_material -= values[PAWN];
+            black_material -= piece_values[PAWN];
         } else {
             piece_maps[PAWN][WHITE] &= ~square_bitboard(capture_square);
-            white_material -= values[PAWN];
+            white_material -= piece_values[PAWN];
         }
 
-        dps.white_sub1 = NNUE::white_index(capture_square, captured_pawn, white_mirror);
-        dps.black_sub1 = NNUE::black_index(capture_square, captured_pawn, black_mirror);
+        dps.white_sub1 = NNUE::make_index<WHITE>(capture_square, captured_pawn, white_mirror);
+        dps.black_sub1 = NNUE::make_index<BLACK>(capture_square, captured_pawn, black_mirror);
 
         type = NNUE::EN_PASSANT;
 
@@ -439,9 +439,9 @@ void Position::unmake_move(MoveInfo& move_info) {
         piece_maps[capture_type][!turn] |= square_bitboard(end_square);
 
         if (turn == WHITE) {
-            black_material += values[capture_type];
+            black_material += piece_values[capture_type];
         } else {
-            white_material += values[capture_type];
+            white_material += piece_values[capture_type];
         }
     }
 
@@ -476,9 +476,9 @@ void Position::unmake_move(MoveInfo& move_info) {
         piece_maps[PAWN][!turn] |= square_bitboard(capture_square);
 
         if (turn == WHITE) {
-            black_material += values[PAWN];
+            black_material += piece_values[PAWN];
         } else {
-            white_material += values[PAWN];
+            white_material += piece_values[PAWN];
         }
     }
 
@@ -489,9 +489,9 @@ void Position::unmake_move(MoveInfo& move_info) {
         piece_maps[PAWN][turn] |= square_bitboard(start_square);
 
         if (turn == WHITE) {
-            white_material -= values[promotion] - values[PAWN];
+            white_material -= piece_values[promotion] - piece_values[PAWN];
         } else {
-            black_material -= values[promotion] - values[PAWN];
+            black_material -= piece_values[promotion] - piece_values[PAWN];
         }
 
         piece_maps[promotion][turn] &= ~square_bitboard(start_square);
@@ -526,10 +526,10 @@ bool Position::SEE(Move move, int threshold) {
     int move_turn = get_color(piece);
     int current_turn = !move_turn;
     int capture = board[move.to()];
-    int exchange = capture ? values[get_piece_type(capture)] : 0;
+    int exchange = capture ? piece_values[get_piece_type(capture)] : 0;
     int last_attacker = get_piece_type(piece);
 
-    if (exchange >= values[last_attacker] + threshold) {
+    if (exchange >= piece_values[last_attacker] + threshold) {
         return true;
     }
 
@@ -552,9 +552,9 @@ bool Position::SEE(Move move, int threshold) {
             if (weakest_piece == KING) {
                 if (!(get_attackers(end_square, !current_turn, blockers) & blockers)) {
                     if (current_turn == move_turn) {
-                        exchange += values[last_attacker];
+                        exchange += piece_values[last_attacker];
                     } else {
-                        exchange -= values[last_attacker];
+                        exchange -= piece_values[last_attacker];
                     }
                 }
                 return exchange >= threshold;
@@ -570,13 +570,13 @@ bool Position::SEE(Move move, int threshold) {
         }
 
         if (current_turn == move_turn) {
-            exchange += values[last_attacker];
-            if (exchange - values[next_attacker] >= threshold) {
+            exchange += piece_values[last_attacker];
+            if (exchange - piece_values[next_attacker] >= threshold) {
                 return true;
             }
         } else {
-            exchange -= values[last_attacker];
-            if (exchange + values[next_attacker] < threshold) {
+            exchange -= piece_values[last_attacker];
+            if (exchange + piece_values[next_attacker] < threshold) {
                 return false;
             }
         }
@@ -601,29 +601,23 @@ TerminalState Position::get_draw() {
     }
 
     // insufficient material
-    if (white_material + black_material <= values[BISHOP] * 2) {
-        // excluding kings
-        int num_pieces = popcount(pieces()) - 2;
-        
-        if (num_pieces == 0) {
+    int num_pieces = popcount(pieces()) - 2;
+    if (num_pieces == 0) {
+        return INSUFFICIENT_MATERIAL;
+    }
+    if (num_pieces == 1 && (piece_maps[KNIGHT][WHITE] || piece_maps[KNIGHT][BLACK] ||
+        piece_maps[BISHOP][WHITE] || piece_maps[BISHOP][BLACK])) {
+
+        return INSUFFICIENT_MATERIAL;
+    }
+    if (num_pieces == 2) {
+        // one bishop each is a draw if same color
+        constexpr uint64_t LIGHT_SQUARES = 0xAA55AA55AA55AA55ULL;
+        constexpr uint64_t DARK_SQUARES = 0x55AA55AA55AA55AAULL;
+
+        if ((((LIGHT_SQUARES & piece_maps[BISHOP][WHITE]) && (LIGHT_SQUARES & piece_maps[BISHOP][BLACK])) ||
+            ((DARK_SQUARES & piece_maps[BISHOP][WHITE]) && (DARK_SQUARES & piece_maps[BISHOP][BLACK])))) {
             return INSUFFICIENT_MATERIAL;
-        }
-        
-        if (num_pieces == 1 && (piece_maps[KNIGHT][WHITE] || piece_maps[KNIGHT][BLACK] ||
-            piece_maps[BISHOP][WHITE] || piece_maps[BISHOP][BLACK])) {
-
-            return INSUFFICIENT_MATERIAL;
-        }
-
-        if (num_pieces == 2) {
-            // one bishop each is a draw if same color
-            constexpr uint64_t LIGHT_SQUARES = 0xAA55AA55AA55AA55ULL;
-            constexpr uint64_t DARK_SQUARES = 0x55AA55AA55AA55AAULL;
-
-            if ((((LIGHT_SQUARES & piece_maps[BISHOP][WHITE]) && (LIGHT_SQUARES & piece_maps[BISHOP][BLACK])) ||
-                ((DARK_SQUARES & piece_maps[BISHOP][WHITE]) && (DARK_SQUARES & piece_maps[BISHOP][BLACK])))) {
-                return INSUFFICIENT_MATERIAL;
-            }
         }
     }
 

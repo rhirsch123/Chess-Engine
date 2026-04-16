@@ -3,10 +3,11 @@
 namespace NNUE {
     alignas(64) int16_t accumulators[1024][2][L1_SIZE];
     alignas(64) AccInfo acc_info[1024];
+    alignas(64) uint8_t activated_accumulators[L1_SIZE * 2];
 
     alignas(64) int16_t l1_weights[INPUT_SIZE][L1_SIZE];
     alignas(64) int16_t l1_biases[L1_SIZE];
-    alignas(64) int8_t l2_weights[L1_SIZE][L2_SIZE * 2];
+    alignas(64) int8_t l2_weights[L1_SIZE / 2][L2_SIZE * 4];
     alignas(64) float l2_biases[L2_SIZE];
     alignas(64) float l3_weights[L2_SIZE][L3_SIZE];
     alignas(64) float l3_biases[L3_SIZE];
@@ -14,6 +15,8 @@ namespace NNUE {
                 float output_bias;
 
     static constexpr int jump32 = REGISTER_WIDTH / 32;
+    static constexpr int jump16 = REGISTER_WIDTH / 16;
+    static constexpr int jump8 = REGISTER_WIDTH / 8;
     static constexpr int l2_chunks = L2_SIZE / jump32;
     static constexpr int l3_chunks = L3_SIZE / jump32;
 
@@ -25,9 +28,9 @@ namespace NNUE {
     int num_active = 0;
 
     #if USE_NEON || USE_AVX2
-        // indexed by every possible uint16 mask of active indices
+        // indexed by every possible uint8 mask of active indices
         // holds corresponding contiguous array of indices
-        alignas(64) uint16_t active_table[1 << 16][16];
+        alignas(64) uint16_t active_table[1 << 8][8];
     #endif
 
 
@@ -80,20 +83,25 @@ namespace NNUE {
 
         for (int i = 0; i < INPUT_SIZE; i++) {
             for (int j = 0; j < L1_SIZE; j++) {
-                l1_weights[i][j] = static_cast<int>(std::round(fl1_weights[i * L1_SIZE + j] * QA));
+                l1_weights[i][j] = static_cast<int16_t>(std::round(fl1_weights[i * L1_SIZE + j] * QA));
             }
         }
         for (int i = 0; i < L1_SIZE; i++) {
-            l1_biases[i] = static_cast<int>(std::round(fl1_biases[i] * QA));
+            l1_biases[i] = static_cast<int16_t>(std::round(fl1_biases[i] * QA));
         }
 
-        for (int i = 0; i < L1_SIZE; i++) {
+        // l2_weights are grouped by four and side-to-move and opponent weights are concatenated
+        for (int i = 0; i < L1_SIZE / 4; i++) {
             for (int j = 0; j < L2_SIZE; j++) {
-                // l2 weights are interleaved side to move and opponent
-                l2_weights[i][j * 2] = static_cast<int>(std::round(fl2_weights_stm[i * L2_SIZE + j] * QB));
-                l2_weights[i][j * 2 + 1] = static_cast<int>(std::round(fl2_weights_opp[i * L2_SIZE + j] * QB));
+                for (int k = 0; k < 4; k++) {
+                    l2_weights[i][j * 4 + k] =
+                      static_cast<int8_t>(std::round(fl2_weights_stm[(i * 4 + k) * L2_SIZE + j] * QB));
+                    l2_weights[i + L1_SIZE / 4][j * 4 + k] =
+                      static_cast<int8_t>(std::round(fl2_weights_opp[(i * 4 + k) * L2_SIZE + j] * QB));
+                }
             }
         }
+
         for (int i = 0; i < L2_SIZE; i++) {
             l2_biases[i] *= QA * QB;
         }
@@ -110,17 +118,16 @@ namespace NNUE {
 
 
         #if USE_NEON || USE_AVX2
-        std::memset(active_table, 0, sizeof(active_table));
-        for (int i = 0; i < (1 << 16); i++) {
-            uint32_t mask = i;
-            int n = 0;
-            while (mask) {
-                uint16_t idx = __builtin_ctz(mask);
-                mask &= mask - 1;
-
-                active_table[i][n++] = idx;
+            std::memset(active_table, 0, sizeof(active_table));
+            for (int i = 0; i < (1 << 8); i++) {
+                uint32_t mask = i;
+                int n = 0;
+                while (mask) {
+                    uint16_t idx = __builtin_ctz(mask);
+                    mask &= mask - 1;
+                    active_table[i][n++] = idx;
+                }
             }
-        }
         #endif
     }
 
@@ -141,18 +148,21 @@ namespace NNUE {
             int square = pop_lsb(pieces);
             int piece = position.board[square];
 
-            int white_idx = white_index(square, piece, white_mirror);
-            int black_idx = black_index(square, piece, black_mirror);
+            int white_idx = make_index<WHITE>(square, piece, white_mirror);
+            int black_idx = make_index<BLACK>(square, piece, black_mirror);
 
-            for (int j = 0; j < L1_SIZE; j++) {
-                accumulators[ply][WHITE][j] += l1_weights[white_idx][j];
-                accumulators[ply][BLACK][j] += l1_weights[black_idx][j];
+            for (int i = 0; i < L1_SIZE; i++) {
+                accumulators[ply][WHITE][i] += l1_weights[white_idx][i];
+                accumulators[ply][BLACK][i] += l1_weights[black_idx][i];
             }
         }
 
         acc_info[ply].clean = true;
     }
 
+    static inline int crelu(int x) {
+        return x < 0 ? 0 : (x > QA ? QA : x);
+    }
 
     // not optimized - used for debugging
     int evaluate(Position& position) {
@@ -168,12 +178,14 @@ namespace NNUE {
         for (int i = 0; i < L2_SIZE; i++) {
             l2_layer[i] = l2_biases[i];
         }
-        for (int i = 0; i < L1_SIZE; i++) {
-            int16_t a_stm = acc_stm[i] < 0 ? 0 : (acc_stm[i] > QA ? QA : acc_stm[i]);
-            int16_t a_opp = acc_opp[i] < 0 ? 0 : (acc_opp[i] > QA ? QA : acc_opp[i]);
-            for (int j = 0; j < L2_SIZE; j++) {
-                l2_layer[j] += a_stm * l2_weights[i][j * 2];
-                l2_layer[j] += a_opp * l2_weights[i][j * 2 + 1];
+        for (int i = 0; i < L1_SIZE / 4; i++) {
+            for (int k = 0; k < 4; k++) {
+                int a_stm = crelu(acc_stm[i * 4 + k]);
+                int a_opp = crelu(acc_opp[i * 4 + k]);
+                for (int j = 0; j < L2_SIZE; j++) {
+                    l2_layer[j] += a_stm * l2_weights[i][j * 4 + k];
+                    l2_layer[j] += a_opp * l2_weights[i + L1_SIZE / 4][j * 4 + k];
+                }
             }
         }
 
@@ -275,138 +287,111 @@ namespace NNUE {
     }
 
 
-    // populate active_indices where either side's accumulator value will be nonzero after crelu
-    void set_active(int ply) {
+    // apply crelu activation to the accumulator and populate active_indices
+    // with the indices of nonzero groups of four adjacent values
+    void activate_accumulators(int ply, int turn) {
         num_active = 0;
 
-        const vec_i16* acc_white = reinterpret_cast<const vec_i16*>(accumulators[ply][WHITE]);
-        const vec_i16* acc_black = reinterpret_cast<const vec_i16*>(accumulators[ply][BLACK]);
+        #if USE_NEON
+            uint16x8_t base = vdupq_n_u16(0);
+            const uint16x8_t increment = vdupq_n_u16(8);
+        #elif USE_AVX512_VBMI2
+            __m512i base = _mm512_set_epi16(
+                31, 30, 29, 28, 15, 14, 13, 12, 27, 26, 25, 24, 11, 10, 9, 8,
+                23, 22, 21, 20, 7,  6,  5,  4,  19, 18, 17, 16, 3,  2,  1, 0
+            );
+            const __m512i increment = _mm512_set1_epi16(32);
+        #elif USE_AVX512
+            __m512i base = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,  4,  3,  2,  1,  0);
+            const __m512i increment = _mm512_set1_epi32(16);
+        #elif USE_AVX2
+            __m128i base = _mm_setzero_si128();
+            const __m128i increment = _mm_set1_epi16(8);
+        #endif
 
-    #if USE_NEON
-    
-        static constexpr uint16_t nnz_mask[8] = {1, 2, 4, 8, 16, 32, 64, 128};
-        static constexpr int num_chunks = L1_SIZE / 16;
+        for (int i = 0; i < 2; i++) {
+            // side to move first, then opponent
+            int16_t* acc = accumulators[ply][turn ^ i];
 
-        uint16x8_t base = vdupq_n_u16(0);
-        const uint16x8_t increment = vdupq_n_u16(16);
+            for (int j = 0; j < L1_SIZE; j += jump16 * 4) {
+                vec_i16 v0 = vec_load_i16(acc + j);
+                vec_i16 v1 = vec_load_i16(acc + j + jump16);
+                vec_i16 v2 = vec_load_i16(acc + j + jump16 * 2);
+                vec_i16 v3 = vec_load_i16(acc + j + jump16 * 3);
 
-        for (int i = 0; i < num_chunks; i++) {
-            const int16x8_t white0 = acc_white[i * 2];
-            const int16x8_t black0 = acc_black[i * 2];
-            const int16x8_t white1 = acc_white[i * 2 + 1];
-            const int16x8_t black1 = acc_black[i * 2 + 1];
+                // unsigned saturation for crelu because the quantized 1.0 is 255
+                vec_u8 activated0 = vec_packus_ordered_i16(v0, v1);
+                vec_u8 activated1 = vec_packus_ordered_i16(v2, v3);
+                vec_store_u8(activated_accumulators + i * L1_SIZE + j, activated0);
+                vec_store_u8(activated_accumulators + i * L1_SIZE + j + jump8, activated1);
 
-            const uint16x8_t cmp0 = vorrq_u16(vcgtq_s16(white0, v_zero_i16), vcgtq_s16(black0, v_zero_i16));
-            const uint16x8_t cmp1 = vorrq_u16(vcgtq_s16(white1, v_zero_i16), vcgtq_s16(black1, v_zero_i16));
+                // set active indices
 
-            const uint8_t m0 = vaddvq_u16(vandq_u16(cmp0, vld1q_u16(nnz_mask)));
-            const uint8_t m1 = vaddvq_u16(vandq_u16(cmp1, vld1q_u16(nnz_mask)));
-            const uint16_t idx = m0 | (m1 << 8);
+                vec_u32 grouped0 = vec_u32(activated0);
+                vec_u32 grouped1 = vec_u32(activated1);
 
-            const uint16x8_t idxs0 = vld1q_u16(active_table[idx]);
-            const uint16x8_t idxs1 = vld1q_u16(active_table[idx] + 8);
+            #if USE_NEON
+                static constexpr uint16_t nnz_mask[8] = {1, 2, 4, 8, 16, 32, 64, 128};
 
-            vst1q_u16(active_indices + num_active, vaddq_u16(idxs0, base));
-            vst1q_u16(active_indices + num_active + 8, vaddq_u16(idxs1, base));
-            base = vaddq_u16(base, increment);
-            num_active += __builtin_popcount(idx);
-        }
-    
-    #elif USE_AVX512_VBMI2
+                uint16x8_t combined = vcombine_u16(
+                    vqmovn_u32(vtstq_u32(grouped0, grouped0)),
+                    vqmovn_u32(vtstq_u32(grouped1, grouped1)));
+                
+                uint8_t mask = vaddvq_u16(vandq_u16(combined, vld1q_u16(nnz_mask)));
+                uint16x8_t indices = vld1q_u16(active_table[mask]);
 
-        static constexpr int num_chunks = L1_SIZE / 32;
+                vst1q_u16(active_indices + num_active, vaddq_u16(indices, base));
+                base = vaddq_u16(base, increment);
+                num_active += __builtin_popcount(mask);
 
-        __m512i base = _mm512_set_epi16(
-            31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
-            15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,  4,  3,  2,  1,  0
-        );
-        const __m512i increment = _mm512_set1_epi16(32);
+            #elif USE_AVX512_VBMI2
 
-        for (int i = 0; i < num_chunks; i++) {
-            const uint32_t mask = _mm512_cmpgt_epi16_mask(acc_white[i], v_zero_i16)
-                                | _mm512_cmpgt_epi16_mask(acc_black[i], v_zero_i16);
-            
-            const __m512i indices = _mm512_maskz_compress_epi16(mask, base);
-            _mm512_storeu_epi16(active_indices + num_active, indices);
-            base = _mm512_add_epi16(base, increment);
-            num_active += __builtin_popcount(mask);
-        }
+                __m512i combined = _mm512_packs_epi32(grouped0, grouped1);
+                uint32_t mask = _mm512_test_epi16_mask(combined, combined);
+                __m512i indices = _mm512_maskz_compress_epi16(mask, base);
+                _mm512_storeu_si512(active_indices + num_active, indices);
+                base = _mm512_add_epi16(base, increment);
+                num_active += __builtin_popcount(mask);
 
-    #elif USE_AVX512
+            #elif USE_AVX512
 
-        static constexpr int num_chunks = L1_SIZE / 32;
+                uint16_t mask = _mm512_test_epi32_mask(grouped0, grouped0);
+                __m512i indices = _mm512_maskz_compress_epi32(mask, base);
+                _mm512_mask_cvtepi32_storeu_epi16(active_indices + num_active, 0xFFFF, indices);
+                base = _mm512_add_epi32(base, increment);
+                num_active += __builtin_popcount(mask);
 
-        __m512i base = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9,  8,  7,  6,  5,  4,  3,  2,  1,  0);
-        const __m512i increment = _mm512_set1_epi32(16);
+                mask = _mm512_test_epi32_mask(grouped1, grouped1);
+                indices = _mm512_maskz_compress_epi32(mask, base);
+                _mm512_mask_cvtepi32_storeu_epi16(active_indices + num_active, 0xFFFF, indices);
+                base = _mm512_add_epi32(base, increment);
+                num_active += __builtin_popcount(mask);
 
-        for (int i = 0; i < num_chunks; i++) {
-            const uint32_t mask = _mm512_cmpgt_epi16_mask(acc_white[i], v_zero_i16)
-                                | _mm512_cmpgt_epi16_mask(acc_black[i], v_zero_i16);
+            #elif USE_AVX2
 
-            uint16_t m0 = mask & 0xFFFF;
-            uint16_t m1 = mask >> 16;
+                __m256i nonzero = _mm256_xor_si256(_mm256_cmpeq_epi32(grouped0, v_zero_i32), _mm256_set1_epi32(-1));
+                int mask = _mm256_movemask_ps(_mm256_castsi256_ps(nonzero));
+                __m128i indices = _mm_load_si128(reinterpret_cast<const __m128i*>(active_table[mask]));
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(active_indices + num_active), _mm_add_epi16(base, indices));
+                num_active += __builtin_popcount(mask);
+                base = _mm_add_epi16(base, increment);
 
-            __m512i indices = _mm512_maskz_compress_epi32(m0, base);
-            _mm512_mask_cvtepi32_storeu_epi16(active_indices + num_active, 0xFFFF, indices);
-            base = _mm512_add_epi32(base, increment);
-            num_active += __builtin_popcount(m0);
+                nonzero = _mm256_xor_si256(_mm256_cmpeq_epi32(grouped1, v_zero_i32), _mm256_set1_epi32(-1));
+                mask = _mm256_movemask_ps(_mm256_castsi256_ps(nonzero));
+                indices = _mm_load_si128(reinterpret_cast<const __m128i*>(active_table[mask]));
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(active_indices + num_active), _mm_add_epi16(base, indices));
+                num_active += __builtin_popcount(mask);
+                base = _mm_add_epi16(base, increment);
 
-            indices = _mm512_maskz_compress_epi32(m1, base);
-            _mm512_mask_cvtepi32_storeu_epi16(active_indices + num_active, 0xFFFF, indices);
-            base = _mm512_add_epi32(base, increment);
-            num_active += __builtin_popcount(m1);
-        }
-
-    #elif USE_AVX2
-
-        static constexpr int num_chunks = L1_SIZE / 32;
-
-        __m256i base = _mm256_set1_epi16(0);
-        const __m256i increment = _mm256_set1_epi16(16);
-
-        for (int i = 0; i < num_chunks; i++) {
-            const __m256i white0 = acc_white[i * 2];
-            const __m256i black0 = acc_black[i * 2];
-            const __m256i white1 = acc_white[i * 2 + 1];
-            const __m256i black1 = acc_black[i * 2 + 1];
-
-            const __m256i cmp0 = _mm256_or_si256(_mm256_cmpgt_epi16(white0, v_zero_i16), _mm256_cmpgt_epi16(black0, v_zero_i16));
-            const __m256i cmp1 = _mm256_or_si256(_mm256_cmpgt_epi16(white1, v_zero_i16), _mm256_cmpgt_epi16(black1, v_zero_i16));
-
-            // order: first 8 of cmp0, first 8 of cmp1, second 8 of cmp0, second 8 of cmp1
-            uint32_t mask = _mm256_movemask_epi8(_mm256_packs_epi16(cmp0, cmp1));
-
-            #if defined(__BMI2__)
-            uint16_t m0 = _pext_u32(mask, 0x00FF00FF);
-            uint16_t m1 = _pext_u32(mask, 0xFF00FF00);
-            #else
-            uint16_t m0 = (mask & 0xFF) | ((mask & 0xFF0000) >> 8);
-            uint16_t m1 = ((mask & 0xFF00) >> 8) | ((mask & 0xFF000000) >> 16);
             #endif
-
-            __m256i indices = _mm256_load_si256(reinterpret_cast<const __m256i *>(active_table[m0]));
-            indices = _mm256_add_epi16(indices, base);
-            _mm256_storeu_si256(reinterpret_cast<__m256i *>(active_indices + num_active), indices);
-            base = _mm256_add_epi16(base, increment);
-            num_active += __builtin_popcount(m0);
-
-            indices = _mm256_load_si256(reinterpret_cast<const __m256i *>(active_table[m1]));
-            indices = _mm256_add_epi16(indices, base);
-            _mm256_storeu_si256(reinterpret_cast<__m256i *>(active_indices + num_active), indices);
-            base = _mm256_add_epi16(base, increment);
-            num_active += __builtin_popcount(m1);
+            }
         }
-
-    #endif
     }
 
 
     int evaluate_incremental(int ply, int turn) {
         clean_accumulators(ply);
-        set_active(ply);
-
-        const int16_t* acc_stm = accumulators[ply][turn];
-        const int16_t* acc_opp = accumulators[ply][!turn];
+        activate_accumulators(ply, turn);
 
         for (int i = 0; i < l2_chunks; i++) {
             l2_acc[i] = v_zero_i32;
@@ -416,61 +401,18 @@ namespace NNUE {
         // inference is sped up by looping through non-zero indices
 
         // to take advantage of vector operations that add adjacent elements,
-        // two accumulator values are interleaved and handled at the same time
+        // four adjacent accumulator values are handled at the same time
 
-    #ifdef USE_NEON
-
+        const uint32_t* grouped_activations = reinterpret_cast<const uint32_t*>(activated_accumulators);
+        
         for (int i = 0; i < num_active; i++) {
             int idx = active_indices[i];
-            uint16_t a_stm = acc_stm[idx] < 0 ? 0 : (acc_stm[idx] > QA ? QA : acc_stm[idx]);
-            uint16_t a_opp = acc_opp[idx] < 0 ? 0 : (acc_opp[idx] > QA ? QA : acc_opp[idx]);
-
-            uint32_t concat = (uint32_t) a_stm | ((uint32_t) a_opp << 16);
-            int16x8_t interleaved = vreinterpretq_s16_s32(vdupq_n_s32(concat));
-
-            int8x16_t w0 = vld1q_s8(l2_weights[idx]);
-            int8x16_t w1 = vld1q_s8(l2_weights[idx] + 16);
-            int16x8_t weights0 = vmovl_s8(vget_low_s8(w0));
-            int16x8_t weights1 = vmovl_high_s8(w0);
-            int16x8_t weights2 = vmovl_s8(vget_low_s8(w1));
-            int16x8_t weights3 = vmovl_high_s8(w1);
-
-            int16x8_t prod0 = vmulq_s16(weights0, interleaved);
-            int16x8_t prod1 = vmulq_s16(weights1, interleaved);
-            int16x8_t prod2 = vmulq_s16(weights2, interleaved);
-            int16x8_t prod3 = vmulq_s16(weights3, interleaved);
-            
-            l2_acc[0] = vpadalq_s16(l2_acc[0], prod0);
-            l2_acc[1] = vpadalq_s16(l2_acc[1], prod1);
-            l2_acc[2] = vpadalq_s16(l2_acc[2], prod2);
-            l2_acc[3] = vpadalq_s16(l2_acc[3], prod3);
+            vec_u8 vals = vec_dup_u32(grouped_activations[idx]);
+            for (int j = 0; j < l2_chunks; j++) {
+                vec_i8 weights = vec_load_i8(l2_weights[idx] + j * jump8);
+                l2_acc[j] = vec_dpbusd_i32(l2_acc[j], vals, weights);
+            }
         }
-
-    #elif USE_AVX2 || USE_AVX512
-
-        for (int i = 0; i < num_active; i++) {
-            int idx = active_indices[i];
-            uint8_t a_stm = acc_stm[idx] < 0 ? 0 : (acc_stm[idx] > QA ? QA : acc_stm[idx]);
-            uint8_t a_opp = acc_opp[idx] < 0 ? 0 : (acc_opp[idx] > QA ? QA : acc_opp[idx]);
-
-            uint16_t concat = (uint16_t) a_stm | ((uint16_t) a_opp << 8);
-            __m256i interleaved = _mm256_set1_epi16(concat);
-
-            __m256i weights = _mm256_load_si256(reinterpret_cast<const __m256i *>(l2_weights[idx]));
-            __m256i acc = _mm256_maddubs_epi16(interleaved, weights);
-
-            #if USE_AVX512
-            l2_acc[0] = _mm512_add_epi32(l2_acc[0], _mm512_cvtepi16_epi32(acc));
-            #else
-            __m256i low = _mm256_cvtepi16_epi32(_mm256_castsi256_si128(acc));
-            __m256i high = _mm256_cvtepi16_epi32(_mm256_extracti128_si256(acc, 1));
-
-            l2_acc[0] = _mm256_add_epi32(l2_acc[0], low);
-            l2_acc[1] = _mm256_add_epi32(l2_acc[1], high);
-            #endif
-        }
-
-    #endif
 
         const vec_f32 v_qaqb_f32 = vec_dup_f32(QA * QB);
 

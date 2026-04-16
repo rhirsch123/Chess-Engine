@@ -71,20 +71,20 @@ namespace NNUE {
         return (king_square % 8) > 3;
     }
 
-    static inline int white_index(int square, int piece, bool mirror) {
-        return (square ^ (mirror * 0b111)) * 12 + piece - 1;
-    }
-    static inline int black_index(int square, int piece, bool mirror) {
-        // flip square vertically, flip piece color
-        return (square ^ 0b111000 ^ (mirror * 0b111)) * 12 + (piece <= 6 ? piece + 5 : piece - 7);
+    template<Color perspective> static inline int make_index(int square, int piece, bool mirror) {
+        if constexpr (perspective == WHITE) {
+            return (square ^ (mirror * 0b111)) * 12 + piece - 1;
+        } else {
+            // flip square vertically, flip piece color
+            return (square ^ 0b111000 ^ (mirror * 0b111)) * 12 + (piece <= 6 ? piece + 5 : piece - 7);
+        }
     }
 
     void reset_accumulators(Position& position);
     void set_dirty(int ply, DirtyPieces& dps);
     void update_accumulators(int ply);
     void clean_accumulators(int ply);
-
-    void set_active(int ply);
+    void activate_accumulators(int ply, int turn);
 
     int evaluate(Position& position);
     int evaluate_incremental(int ply, int turn);

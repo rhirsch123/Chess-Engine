@@ -1,7 +1,10 @@
 #include "engine.hh"
 #include "polyglot.hh"
 
-Engine::Engine() : transposition_table(Hash) {}
+Engine::Engine() : transposition_table(Hash) {
+    init_lmp_table();
+    init_lmr_table();
+}
 
 static inline int evaluation(Position& position) {
     int val = NNUE::evaluate_incremental(position.half_moves, position.turn);
@@ -58,8 +61,8 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
         }
     }
 
-    if (transposition_found && !pv_node && tt.depth != TT_DEPTH_UNSEARCHED &&
-        position.half_moves - position.last_threefold_reset < 90 && popcount(position.pieces()) > 3) {
+    if (transposition_found && !pv_node && tt.depth != TT_DEPTH_UNSEARCHED
+        && position.half_moves - position.last_threefold_reset < 90) {
 
         if (tt.value >= MATE_SCORE - MAX_DEPTH) {
             tt.value -= current_depth;
@@ -187,8 +190,8 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         }
     }
 
-    if (transposition_found && !pv_node && tt.depth >= remaining_depth &&
-        position.half_moves - position.last_threefold_reset < 90 && popcount(position.pieces()) > 3) {
+    if (transposition_found && !pv_node && tt.depth >= remaining_depth
+        && position.half_moves - position.last_threefold_reset < 90) {
 
         if (tt.value >= MATE_SCORE - MAX_DEPTH) {
             tt.value -= current_depth;
@@ -344,7 +347,8 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
     MovePicker move_picker(position, *this, current_depth);
 
     Move local_best_move = hash_move;
-    int num_moves = local_max > -INF;
+    int move_num, moves_played;
+    move_num = moves_played = local_max > -INF;
 
     while (true) {
         Move move = move_picker.next_move();
@@ -356,18 +360,13 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         if (move == hash_move || move == exclude_move) {
             continue;
         }
-        num_moves++;
+        move_num++;
+
+        bool move_found = local_max > -INF;
 
         // late move pruning
-        if (!root_node && remaining_depth <= 5 && move_picker.stage <= QUIETS && local_max > -INF) {
-            int move_bound;
-            if (improving) {
-                move_bound = LMP_IMPROVING_BASE + LMP_IMPROVING_SCALE * remaining_depth * remaining_depth;
-            } else {
-                move_bound = LMP_BASE + LMP_SCALE * remaining_depth * remaining_depth;
-            }
-
-            if (num_moves >= move_bound) {
+        if (!root_node && remaining_depth <= 5 && move_picker.stage <= QUIETS && move_found) {
+            if (move_num >= lmp_table[remaining_depth][improving]) {
                 if (move_picker.stage == QUIETS) {
                     move_picker.index = 0;
                     move_picker.stage = BAD_TACTICS;
@@ -381,7 +380,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         // futility pruning
         // if static eval is well below alpha, quiet moves and bad tactics are unlikely to improve
         // the position enough to matter
-        if (!in_check && remaining_depth <= 6 && move_picker.stage <= QUIETS && local_max > -INF
+        if (!in_check && remaining_depth <= 6 && move_picker.stage <= QUIETS && move_found
             && static_eval + FUTILITY_PRUNE_BASE + FUTILITY_PRUNE_SCALE * remaining_depth <= alpha) {
             if (move_picker.stage == QUIETS) {
                 move_picker.index = 0;
@@ -393,45 +392,37 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         }
 
         int capture = position.board[move.to()];
-        if (!in_check && capture && remaining_depth <= 4 && move_picker.stage == BAD_TACTICS && local_max > -INF) {
+        if (!in_check && capture && remaining_depth <= 4 && move_picker.stage == BAD_TACTICS && move_found) {
             int piece_type = Position::get_piece_type(position.board[move.from()]);
             int capture_type = Position::get_piece_type(capture);
             int hist = capture_history[move.to()][piece_type][capture_type];
             if (static_eval + FP_CAP_BASE + FP_CAP_SCALE * remaining_depth +
-                Position::values[capture_type] + hist / 8 <= alpha) {
+                piece_values[capture_type] + hist / 8 <= alpha) {
                 continue;
             }
         }
         
         // static exchange evaluation pruning
-        if (remaining_depth <= 6 && move_picker.stage == QUIETS && local_max > -INF) {
+        if (remaining_depth <= 6 && move_picker.stage == QUIETS && move_found) {
             int threshold = SEE_PRUNE_SCALE * remaining_depth;
-            if (!position.SEE(move, threshold)) {
+            if (!position.SEE(move, -threshold)) {
                 continue;
             }
         }
 
+        moves_played++;
+
         // late move reduction: assumes decent move ordering, reduce search depth of late ordered moves
         int R = 0; // can be negative for extensions
-        if (!pv_node && num_moves >= 3 && remaining_depth >= 3) {
-            if (num_moves <= 6 || remaining_depth <= 5 || in_check) {
-                R = 1;
-            } else if ((num_moves >= 10 && remaining_depth >= 8) || num_moves >= 15) {
-                R = 3;
+
+        if (!pv_node && moves_played >= 3 && remaining_depth >= 3) {
+            R = lmr_table[remaining_depth][moves_played];
+            R += tt_capture * LMR_TTCAP;
+            
+            if (capture) {
+                R -= LMR_CAPTURE;
             } else {
-                R = 2;
-            }
-
-            R += tt_capture;
-        }
-
-        if (capture) {
-            R--;
-        } else {
-            R -= quiet_history[move.from()][move.to()] / HISTORY_DIVISOR;
-
-            if (num_moves < 3 || remaining_depth < 3) {
-                R = std::min(0, R);
+                R -= LMR_HISTORY * quiet_history[move.from()][move.to()] / MAX_HISTORY;
             }
         }
 
@@ -440,11 +431,12 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         transposition_table.prefetch(position.hash_value);
 
         if (position.checkers && (move_picker.stage == GOOD_TACTICS)) {
-            R--;
+            R -= LMR_GIVES_CHECK;
         }
 
-        bool reduce_depth = R > 0;
+        R /= 1024;
         R = std::max(R, -1);
+        bool reduce_depth = R > 0;
 
         int val;
         if (local_max <= -INF) { // first move
@@ -583,6 +575,7 @@ Move Engine::get_move(Position& position, SearchInfo info) {
         }
     }
 
+    int optimal_time = info.time_left / 20 + info.increment / 2;
     if (info.timed_game) {
         // save time
         MoveList root_legals;
@@ -594,7 +587,8 @@ Move Engine::get_move(Position& position, SearchInfo info) {
             return root_legals.moves[0];
         }
 
-        limits.search_time = info.time_left / 12 + info.increment / 2;
+        // max time to spend on move
+        limits.search_time = info.time_left / 10 + info.increment / 2;
     } else if (info.fixed_time) {
         limits.search_time = info.movetime;
     } else {
@@ -610,6 +604,9 @@ Move Engine::get_move(Position& position, SearchInfo info) {
     int eval = 0;
     int depth;
 
+    Move prev_best_move;
+    int best_move_stability = 0;
+
     int search_depth = info.fixed_depth ? info.depth : MAX_DEPTH;
     for (depth = 1; depth <= search_depth; depth++) {
         int val = aspiration_window(position, depth, eval);
@@ -622,6 +619,7 @@ Move Engine::get_move(Position& position, SearchInfo info) {
         move_found = true;
         eval = val;
 
+        // uci output
         int time_taken = std::max(1, get_milli_duration(limits.start_time));
         if (info.uci) {
             std::string score;
@@ -637,8 +635,20 @@ Move Engine::get_move(Position& position, SearchInfo info) {
             fflush(stdout);
         }
 
+        // time management
+        if (best_move == prev_best_move) {
+            best_move_stability++;
+        } else {
+            best_move_stability = 0;
+        }
+        prev_best_move = best_move;
+
+        // try to spend more time in complex positions
+        constexpr float best_move_scale[5] = {1.5, 1.2, 1.0, 0.85, 0.7};
+        float time_scale = best_move_scale[std::min(best_move_stability, 4)];
+
         // save time by not interrupting a search when possible
-        if (info.timed_game && time_taken > info.time_left / 20 + info.increment / 2) {
+        if (info.timed_game && time_taken > optimal_time * time_scale) {
             break;
         }
     }

@@ -28,8 +28,6 @@ struct MoveInfo {
 
 class Position {
 public:
-    static constexpr int values[6] = { 100, 300, 300, 500, 900, 2000 };
-
     // indexed top to bottom, left to right, from white's perspective (a8 is 0)
     uint8_t board[64];
 

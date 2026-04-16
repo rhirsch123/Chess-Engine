@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 #include <chrono>
+#include <math.h>
 
 #include "transposition_table.hh"
 #include "move.hh"
@@ -37,7 +38,7 @@ public:
     void make_move(Position& position, Move move, int ply);
 
     // move order heuristic: holds {from_square, to_square} of past good moves
-    #define MAX_HISTORY 16384
+    static constexpr int MAX_HISTORY = 16384;
     int quiet_history[64][64] = {{}};
     void update_quiet_history(int from, int to, int depth, bool good) {
         int update = 16 * depth * depth + 128 * (depth - 1);
@@ -67,6 +68,29 @@ public:
             killers[depth][0] = move;
         }
     }
+
+    // late move pruning cutoff by depth and improving
+    int lmp_table[MAX_DEPTH][2];
+    void init_lmp_table() {
+        for (int i = 0; i < MAX_DEPTH; i++) {
+            lmp_table[i][0] = LMP_BASE + LMP_SCALE * i * i;
+            lmp_table[i][1] = LMP_IMPROVING_BASE + LMP_IMPROVING_SCALE * i * i;
+        }
+    }
+
+    // late move reduction by depth and moves played
+    int lmr_table[MAX_DEPTH][MAX_MOVES];
+    void init_lmr_table() {
+        for (int i = 0; i < MAX_DEPTH; i++) {
+            for (int j = 0; j < MAX_MOVES; j++) {
+                if (i == 0 || j == 0) {
+                    lmr_table[i][j] = 0;
+                } else {
+                    lmr_table[i][j] = LMR_BASE + LMR_SCALE * log(i) * log(j);
+                }
+            }
+        }
+    }
     
     Engine();
 
@@ -83,16 +107,21 @@ public:
 
     // tunable search parameters
     int RFP_SCALE = 70;
-    float LMP_IMPROVING_BASE = 3.0;
-    float LMP_IMPROVING_SCALE = 0.75;
     float LMP_BASE = 2.5;
     float LMP_SCALE = 0.5;
-    int HISTORY_DIVISOR = 7000;
+    float LMP_IMPROVING_BASE = 3;
+    float LMP_IMPROVING_SCALE = 0.75;
+    int LMR_BASE = 500;
+    int LMR_SCALE = 390;
+    int LMR_TTCAP = 1024;
+    int LMR_CAPTURE = 1024;
+    int LMR_HISTORY = 2400;
+    int LMR_GIVES_CHECK = 1024;
     int FUTILITY_PRUNE_BASE = 100;
     int FUTILITY_PRUNE_SCALE = 100;
     int FP_CAP_SCALE = 250;
     int FP_CAP_BASE = 210;
-    int SEE_PRUNE_SCALE = -92;
+    int SEE_PRUNE_SCALE = 100;
     int ASPIRATION_DELTA = 20;
 };
 
