@@ -9,7 +9,7 @@ make
 Or install other tools and use the uci executable
 
 ### Strength
-~3400 ELO
+~3500 ELO
 
 ### Features
 - NNUE (Efficiently Updatable Neural Network) used to evaluate positions

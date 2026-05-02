@@ -160,8 +160,8 @@ namespace NNUE {
         acc_info[ply].clean = true;
     }
 
-    static inline int crelu(int x) {
-        return x < 0 ? 0 : (x > QA ? QA : x);
+    static inline int crelu(int x, int max) {
+        return x < 0 ? 0 : (x > max ? max : x);
     }
 
     // not optimized - used for debugging
@@ -175,13 +175,11 @@ namespace NNUE {
         int16_t* acc_opp = accumulators[ply][!turn];
 
         float l2_layer[L2_SIZE];
-        for (int i = 0; i < L2_SIZE; i++) {
-            l2_layer[i] = l2_biases[i];
-        }
+        std::memcpy(l2_layer, l2_biases, L2_SIZE * sizeof(float));
         for (int i = 0; i < L1_SIZE / 4; i++) {
             for (int k = 0; k < 4; k++) {
-                int a_stm = crelu(acc_stm[i * 4 + k]);
-                int a_opp = crelu(acc_opp[i * 4 + k]);
+                int a_stm = crelu(acc_stm[i * 4 + k], QA);
+                int a_opp = crelu(acc_opp[i * 4 + k], QA);
                 for (int j = 0; j < L2_SIZE; j++) {
                     l2_layer[j] += a_stm * l2_weights[i][j * 4 + k];
                     l2_layer[j] += a_opp * l2_weights[i + L1_SIZE / 4][j * 4 + k];
@@ -189,32 +187,20 @@ namespace NNUE {
             }
         }
 
-        // CReLU
         for (int i = 0; i < L2_SIZE; i++) {
-            if (l2_layer[i] < 0) {
-                l2_layer[i] = 0;
-            } else if (l2_layer[i] > QA * QB) {
-                l2_layer[i] = QA * QB;
-            }
+            l2_layer[i] = crelu(l2_layer[i], QA * QB);
         }
 
         float l3_layer[L3_SIZE];
-        for (int i = 0; i < L3_SIZE; i++) {
-            l3_layer[i] = l3_biases[i];
-        }
+        std::memcpy(l3_layer, l3_biases, L3_SIZE * sizeof(float));
         for (int i = 0; i < L2_SIZE; i++) {
             for (int j = 0; j < L3_SIZE; j++) {
                 l3_layer[j] += l2_layer[i] * l3_weights[i][j];
             }
         }
 
-        // CReLU
         for (int i = 0; i < L3_SIZE; i++) {
-            if (l3_layer[i] < 0) {
-                l3_layer[i] = 0;
-            } else if (l3_layer[i] > QA * QB) {
-                l3_layer[i] = QA * QB;
-            }
+            l3_layer[i] = crelu(l3_layer[i], QA * QB);
         }
 
         float output = output_bias;

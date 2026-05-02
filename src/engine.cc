@@ -2,8 +2,7 @@
 #include "polyglot.hh"
 
 Engine::Engine() : transposition_table(Hash) {
-    init_lmp_table();
-    init_lmr_table();
+    init();
 }
 
 static inline int evaluation(Position& position) {
@@ -319,12 +318,13 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         if (local_max >= beta) {
             int capture = position.board[to_square];
             if (!capture) {
-                update_quiet_history(from_square, to_square, remaining_depth, true);
-                update_killers(hash_move, current_depth);
+                update_quiet_history(quiet_history, from_square, to_square, remaining_depth, true);
+                update_continuation_history(cont_history, current_depth, to_square, position.board[from_square] - 1, remaining_depth, true);
+                update_killers(killers, hash_move, current_depth);
             } else {
                 int piece_type = Position::get_piece_type(position.board[from_square]);
                 int capture_type = Position::get_piece_type(capture);
-                update_capture_history(to_square, piece_type, capture_type, remaining_depth, true);
+                update_capture_history(capture_history, to_square, piece_type, capture_type, remaining_depth, true);
             }
 
             if (!exclude_move) {
@@ -362,11 +362,28 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         }
         move_num++;
 
-        bool move_found = local_max > -INF;
+        int capture = position.board[move.to()];
 
-        // late move pruning
-        if (!root_node && remaining_depth <= 5 && move_picker.stage <= QUIETS && move_found) {
-            if (move_num >= lmp_table[remaining_depth][improving]) {
+        bool move_found = local_max > -INF;
+        if (move_found && !root_node && !in_check) {
+            // late move pruning
+            if (remaining_depth <= 5 && move_picker.stage <= QUIETS) {
+                if (move_num >= lmp_table[remaining_depth][improving]) {
+                    if (move_picker.stage == QUIETS) {
+                        move_picker.index = 0;
+                        move_picker.stage = BAD_TACTICS;
+                        continue;
+                    } else {
+                        move_picker.only_tactics = true;
+                    }
+                }
+            }
+
+            // futility pruning
+            // if static eval is well below alpha, quiet moves and bad tactics are unlikely to improve
+            // the position enough to matter
+            if (remaining_depth <= 6 && move_picker.stage <= QUIETS
+                && static_eval + FUTILITY_PRUNE_BASE + FUTILITY_PRUNE_SCALE * remaining_depth <= alpha) {
                 if (move_picker.stage == QUIETS) {
                     move_picker.index = 0;
                     move_picker.stage = BAD_TACTICS;
@@ -375,38 +392,23 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
                     move_picker.only_tactics = true;
                 }
             }
-        }
 
-        // futility pruning
-        // if static eval is well below alpha, quiet moves and bad tactics are unlikely to improve
-        // the position enough to matter
-        if (!in_check && remaining_depth <= 6 && move_picker.stage <= QUIETS && move_found
-            && static_eval + FUTILITY_PRUNE_BASE + FUTILITY_PRUNE_SCALE * remaining_depth <= alpha) {
-            if (move_picker.stage == QUIETS) {
-                move_picker.index = 0;
-                move_picker.stage = BAD_TACTICS;
-                continue;
-            } else {
-                move_picker.only_tactics = true;
+            if (remaining_depth <= 4 && capture && move_picker.stage == BAD_TACTICS) {
+                int piece_type = Position::get_piece_type(position.board[move.from()]);
+                int capture_type = Position::get_piece_type(capture);
+                int hist = capture_history[move.to()][piece_type][capture_type];
+                if (static_eval + FP_CAP_BASE + FP_CAP_SCALE * remaining_depth +
+                    piece_values[capture_type] + hist / 8 <= alpha) {
+                    continue;
+                }
             }
-        }
 
-        int capture = position.board[move.to()];
-        if (!in_check && capture && remaining_depth <= 4 && move_picker.stage == BAD_TACTICS && move_found) {
-            int piece_type = Position::get_piece_type(position.board[move.from()]);
-            int capture_type = Position::get_piece_type(capture);
-            int hist = capture_history[move.to()][piece_type][capture_type];
-            if (static_eval + FP_CAP_BASE + FP_CAP_SCALE * remaining_depth +
-                piece_values[capture_type] + hist / 8 <= alpha) {
-                continue;
-            }
-        }
-        
-        // static exchange evaluation pruning
-        if (remaining_depth <= 6 && move_picker.stage == QUIETS && move_found) {
-            int threshold = SEE_PRUNE_SCALE * remaining_depth;
-            if (!position.SEE(move, -threshold)) {
-                continue;
+            // static exchange evaluation pruning
+            if (remaining_depth <= 6 && move_picker.stage == QUIETS) {
+                int threshold = SEE_PRUNE_SCALE * remaining_depth;
+                if (!position.SEE(move, -threshold)) {
+                    continue;
+                }
             }
         }
 
@@ -439,7 +441,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         bool reduce_depth = R > 0;
 
         int val;
-        if (local_max <= -INF) { // first move
+        if (!move_found) { // first move
             val = -negamax(position, remaining_depth - 1, current_depth + 1, -beta, -alpha);
         } else {
             val = -negamax(position, remaining_depth - 1 - R, current_depth + 1, -alpha - 1, -alpha);
@@ -467,12 +469,13 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
         if (local_max >= beta) {
             if (!capture) {
-                update_quiet_history(from_square, to_square, remaining_depth, true);
-                update_killers(move, current_depth);
+                update_quiet_history(quiet_history, from_square, to_square, remaining_depth, true);
+                update_continuation_history(cont_history, current_depth, to_square, position.board[from_square] - 1, remaining_depth, true);
+                update_killers(killers, move, current_depth);
             } else {
                 int piece_type = Position::get_piece_type(position.board[from_square]);
                 int capture_type = Position::get_piece_type(capture);
-                update_capture_history(to_square, piece_type, capture_type, remaining_depth, true);
+                update_capture_history(capture_history, to_square, piece_type, capture_type, remaining_depth, true);
             }
 
             break;
@@ -480,11 +483,12 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
         // decrease history if move did not beat beta
         if (!capture) {
-            update_quiet_history(from_square, to_square, remaining_depth, false);
+            update_quiet_history(quiet_history, from_square, to_square, remaining_depth, false);
+            update_continuation_history(cont_history, current_depth, to_square, position.board[from_square] - 1, remaining_depth, false);
         } else {
             int piece_type = Position::get_piece_type(position.board[from_square]);
             int capture_type = Position::get_piece_type(capture);
-            update_capture_history(to_square, piece_type, capture_type, remaining_depth, false);
+            update_capture_history(capture_history, to_square, piece_type, capture_type, remaining_depth, false);
         }
 
         alpha = std::max(alpha, local_max);
@@ -680,10 +684,14 @@ Move Engine::get_move(Position& position, SearchInfo info) {
 }
 
 
-void Engine::reset() {
+void Engine::init() {
     std::memset(quiet_history, 0, sizeof(quiet_history));
     std::memset(capture_history, 0, sizeof(capture_history));
+    std::memset(cont_history, 0, sizeof(cont_history));
     std::memset(killers, 0, sizeof(killers));
+
+    init_lmp_table();
+    init_lmr_table();
 
     transposition_table.clear();
 }

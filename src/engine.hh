@@ -12,6 +12,7 @@
 #include "transposition_table.hh"
 #include "move.hh"
 #include "position.hh"
+#include "history.hh"
 #include "movepick.hh"
 #include "types.hh"
 
@@ -35,39 +36,11 @@ public:
     };
     SearchStack stack[MAX_DEPTH];
 
-    void make_move(Position& position, Move move, int ply);
-
-    // move order heuristic: holds {from_square, to_square} of past good moves
-    static constexpr int MAX_HISTORY = 16384;
-    int quiet_history[64][64] = {{}};
-    void update_quiet_history(int from, int to, int depth, bool good) {
-        int update = 16 * depth * depth + 128 * (depth - 1);
-        if (!good) {
-            update = -update;
-        }
-
-        quiet_history[from][to] += update - quiet_history[from][to] * std::abs(update) / MAX_HISTORY;
-    }
-
-    // {to_square, piece_type, capture_type}
-    int capture_history[64][6][5] = {{{}}};
-    void update_capture_history(int to, int piece, int capture, int depth, bool good) {
-        int update = 16 * depth * depth + 128 * (depth - 1);
-        if (!good) {
-            update = -update;
-        }
-
-        capture_history[to][piece][capture] += update - capture_history[to][piece][capture] * std::abs(update) / MAX_HISTORY;
-    }
-
-    // move order heuristic: moves that caused cutoff at the same depth level
-    Move killers[MAX_DEPTH][2] = {{}};
-    void update_killers(Move move, int depth) {
-        if (killers[depth][0] != move) {
-            killers[depth][1] = killers[depth][0];
-            killers[depth][0] = move;
-        }
-    }
+    // move order heuristics
+    QuietHistory quiet_history;
+    ContinuationHistory cont_history;
+    CaptureHistory capture_history;
+    KillerHistory killers;
 
     // late move pruning cutoff by depth and improving
     int lmp_table[MAX_DEPTH][2];
@@ -93,13 +66,14 @@ public:
     }
     
     Engine();
+    void init();
+
+    void make_move(Position& position, Move move, int ply);
 
     int quiescense(Position& position, int alpha, int beta, int current_depth);
     int negamax(Position& position, int remaining_depth, int current_depth, int alpha, int beta, Move exclude_move = Move());
     int aspiration_window(Position& position, int remaining_depth, int estimate);
     Move get_move(Position& position, SearchInfo info = SearchInfo());
-
-    void reset();
 
     // info for analysis/debugging
     int total_nodes = 0;

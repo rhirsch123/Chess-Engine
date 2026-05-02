@@ -64,10 +64,7 @@ void get_pseudo_legal_moves(Position& position, MoveList* move_list, MoveGenType
     if (popcount(position.checkers) > 1) {
         int king_square = lsb(position.piece_maps[KING][position.turn]);
         uint64_t king_moves = get_king_moves(king_square) & targets;
-        while (king_moves) {
-            int to_square = pop_lsb(king_moves);
-            move_list->add(Move(king_square, to_square));
-        }
+        write_piece_moves(king_moves, king_square, move_list);
         return;
     }
 
@@ -255,19 +252,15 @@ bool is_legal(Position& position, Move move) {
     int piece_type = Position::get_piece_type(piece);
     int capture = position.board[to_square];
 
-    // en passant
     bool en_passant = false;
-    if (piece_type == PAWN && from_col != to_col && !position.board[to_square]) {
+    if (capture) {
+        position.piece_maps[Position::get_piece_type(capture)][!position.turn] &= ~square_bitboard(to_square);
+        position.piece_maps[ALL_PIECES][!position.turn] &= ~square_bitboard(to_square);
+    } else if (piece_type == PAWN && from_col != to_col && !position.board[to_square]) {
         en_passant = true;
         int capture_square = from_row * 8 + to_col;
-
-        if (piece == WHITE_PAWN) {
-            position.piece_maps[PAWN][BLACK] &= ~square_bitboard(capture_square);
-            position.piece_maps[ALL_PIECES][BLACK] &= ~square_bitboard(capture_square);
-        } else if (piece == BLACK_PAWN) {
-            position.piece_maps[PAWN][WHITE] &= ~square_bitboard(capture_square);
-            position.piece_maps[ALL_PIECES][WHITE] &= ~square_bitboard(capture_square);
-        }
+        position.piece_maps[PAWN][!position.turn] &= ~square_bitboard(capture_square);
+        position.piece_maps[ALL_PIECES][!position.turn] &= ~square_bitboard(capture_square);
     }
 
     // piece moved
@@ -276,35 +269,22 @@ bool is_legal(Position& position, Move move) {
     position.piece_maps[ALL_PIECES][position.turn] &= ~square_bitboard(from_square);
     position.piece_maps[ALL_PIECES][position.turn] |= square_bitboard(to_square);
 
-    // piece captured
-    if (capture) {
-        position.piece_maps[Position::get_piece_type(capture)][!position.turn] &= ~square_bitboard(to_square);
-        position.piece_maps[ALL_PIECES][!position.turn] &= ~square_bitboard(to_square);
-    }
-
     bool legal = !position.is_attacked(king_square);
     
     // undo board changes
-    if (en_passant) {
+    if (capture) {
+        position.piece_maps[Position::get_piece_type(capture)][!position.turn] |= square_bitboard(to_square);
+        position.piece_maps[ALL_PIECES][!position.turn] |= square_bitboard(to_square);
+    } else if (en_passant) {
         int capture_square = from_row * 8 + to_col;
-        if (piece == WHITE_PAWN) {
-            position.piece_maps[PAWN][BLACK] |= square_bitboard(capture_square);
-            position.piece_maps[ALL_PIECES][BLACK] |= square_bitboard(capture_square);
-        } else {
-            position.piece_maps[PAWN][WHITE] |= square_bitboard(capture_square);
-            position.piece_maps[ALL_PIECES][WHITE] |= square_bitboard(capture_square);
-        }
+        position.piece_maps[PAWN][!position.turn] |= square_bitboard(capture_square);
+        position.piece_maps[ALL_PIECES][!position.turn] |= square_bitboard(capture_square);
     }
 
     position.piece_maps[piece_type][position.turn] |= square_bitboard(from_square);
     position.piece_maps[piece_type][position.turn] &= ~square_bitboard(to_square);
     position.piece_maps[ALL_PIECES][position.turn] |= square_bitboard(from_square);
     position.piece_maps[ALL_PIECES][position.turn] &= ~square_bitboard(to_square);
-
-    if (capture) {
-        position.piece_maps[Position::get_piece_type(capture)][!position.turn] |= square_bitboard(to_square);
-        position.piece_maps[ALL_PIECES][!position.turn] |= square_bitboard(to_square);
-    }
 
     return legal;
 }

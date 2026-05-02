@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
     auto start_time = std::chrono::high_resolution_clock::now();
     for (auto fen : fens) {
         printf("%s\n", fen.c_str());
-        engine.reset();
+        engine.init();
         position.set_fen(fen);
         engine.get_move(position, info);
         nodes += engine.total_nodes;

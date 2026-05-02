@@ -26,7 +26,13 @@ void MovePicker::get_sorted_moves() {
             int score = 0;
             score += (1 << 30) * (move == engine.killers[current_depth][0]);
             score += (1 << 29) * (move == engine.killers[current_depth][1]);
+
             score += engine.quiet_history[move.from()][move.to()];
+
+            // continuation history
+            int piece = position.board[move.from()] - 1;
+            int ply = current_depth + MAX_CH_PLY;
+            score += engine.cont_history[ply - 1][move.to()][piece];
 
             scored_moves.add(ScoredMove(move, score));
         }

@@ -51,7 +51,7 @@ int main(int argc, char * argv[]) {
         } else if (line == "isready") {
             printf("readyok\n");
         } else if (line == "ucinewgame") {
-            engine.reset();
+            engine.init();
         } else if (line.rfind("position", 0) == 0) {
             std::istringstream iss(line);
             std::string token;

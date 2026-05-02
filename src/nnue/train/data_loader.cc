@@ -14,17 +14,27 @@
 namespace {
     /* 
     Data format:
-    pos: 16 identifiers of pieces on 4 adjacent squares {a8-d8, e8-h8, a7-d7, ...}
-       - pos[i] = pc0 + pc1 * 13 + pc2 * 13^2 + pc3 * 13^3
-    eval: from perspective of side to move
-    result: -1 loss, 0 draw, 1 win, from perspective of side to move
-    turn: 0 white, 1 black
+    - pieces: each byte holds up to two pieces 0-11
+        - ordered as they are on the board [a8, b8, ... g1, h1]
+        - pieces[i] = pc0 | (pc1 << 4)
+    - occupancy: bitboard
+    - white/black king squares
+    - eval: from perspective of side to move
+    - best_move: (from_square << 6) | to_square
+    - result: -1 loss, 0 draw, 1 win, from perspective of side to move
+    - turn: 0 white, 1 black
+
+    Could be slightly more compact, but it is good to be 32 bytes
     */
     struct DataPoint {
-        uint16_t pos[16];
+        uint8_t pieces[16];
+        uint64_t occupancy;
+        uint8_t white_king;
+        uint8_t black_king;
         int16_t eval;
+        uint16_t best_move;
         int8_t result;
-        int8_t turn;
+        uint8_t turn;
     };
 
     struct MMapFile {
@@ -94,7 +104,6 @@ public:
     // returns (stm_features, opp_features, eval)
     std::vector<torch::Tensor> get_batch(uint64_t start, uint64_t batch_size) const {
         static constexpr int NUM_FEATURES = 768;
-        static constexpr int NUM_PIECES = 12;
 
         auto feature_options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
         auto eval_options = torch::TensorOptions().dtype(torch::kInt16).device(torch::kCPU);
@@ -120,145 +129,36 @@ public:
                 const DataPoint pos = data[start + batch_index];
                 eval_ptr[batch_index] = pos.eval;
 
-                float* out_stm = stm_ptr + batch_index * NUM_FEATURES;
-                float* out_opp = opp_ptr + batch_index * NUM_FEATURES;
-
-                int white_king_square = 0;
-                int black_king_square = 0;
-                for (int i = 0; i < 16; i++) {
-                    uint16_t index = pos.pos[i];
-                    
-                    int square = 4 * i;
-
-                    int pc0 = index % 13;
-                    index /= 13;
-                    int pc1 = index % 13;
-                    index /= 13;
-                    int pc2 = index % 13;
-                    index /= 13;
-                    int pc3 = index % 13;
-
-                    if (pc0 == 12) black_king_square = square + 0;
-                    else if (pc1 == 12) black_king_square = square + 1;
-                    else if (pc2 == 12) black_king_square = square + 2;
-                    else if (pc3 == 12) black_king_square = square + 3;
-
-                    if (pc0 == 6) white_king_square = square + 0;
-                    else if (pc1 == 6) white_king_square = square + 1;
-                    else if (pc2 == 6) white_king_square = square + 2;
-                    else if (pc3 == 6) white_king_square = square + 3;
-                }
-                bool white_mirror = (white_king_square % 8) > 3;
-                bool black_mirror = (black_king_square % 8) > 3;
-
+                int offset = batch_index * NUM_FEATURES;
+                float* out_white;
+                float* out_black;
                 if (pos.turn == 0) {
-                    for (int i = 0; i < 16; i++) {
-                        uint16_t index = pos.pos[i];
-                        
-                        int square = 4 * i;
-                        int black_square = square ^ 0b111000;
-
-                        if (white_mirror) square ^= 0b111;
-                        if (black_mirror) black_square ^= 0b111;
-
-                        float* ft_stm = out_stm + square * 12;
-                        float* ft_opp = out_opp + black_square * 12;
-
-                        int pc0 = index % 13;
-                        index /= 13;
-                        int pc1 = index % 13;
-                        index /= 13;
-                        int pc2 = index % 13;
-                        index /= 13;
-                        int pc3 = index % 13;
-
-                        if (pc0) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 0 : NUM_PIECES * 0;
-                            int black_offset = black_mirror ? -NUM_PIECES * 0 : NUM_PIECES * 0;
-
-                            ft_stm[white_offset + pc0 - 1] = 1;
-                            int black_piece = pc0 <= 6 ? pc0 + 5 : pc0 - 7;
-                            ft_opp[black_offset + black_piece] = 1;
-                        }
-                        if (pc1) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 1 : NUM_PIECES * 1;
-                            int black_offset = black_mirror ? -NUM_PIECES * 1 : NUM_PIECES * 1;
-
-                            ft_stm[white_offset + pc1 - 1] = 1;
-                            int black_piece = pc1 <= 6 ? pc1 + 5 : pc1 - 7;
-                            ft_opp[black_offset + black_piece] = 1;
-                        }
-                        if (pc2) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 2 : NUM_PIECES * 2;
-                            int black_offset = black_mirror ? -NUM_PIECES * 2 : NUM_PIECES * 2;
-
-                            ft_stm[white_offset + pc2 - 1] = 1;
-                            int black_piece = pc2 <= 6 ? pc2 + 5 : pc2 - 7;
-                            ft_opp[black_offset + black_piece] = 1;
-                        }
-                        if (pc3) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 3 : NUM_PIECES * 3;
-                            int black_offset = black_mirror ? -NUM_PIECES * 3 : NUM_PIECES * 3;
-
-                            ft_stm[white_offset + pc3 - 1] = 1;
-                            int black_piece = pc3 <= 6 ? pc3 + 5 : pc3 - 7;
-                            ft_opp[black_offset + black_piece] = 1;
-                        }
-                    }
+                    out_white = stm_ptr + offset;
+                    out_black = opp_ptr + offset;
                 } else {
-                    for (int i = 0; i < 16; i++) {
-                        uint16_t index = pos.pos[i];
-                        
-                        int square = 4 * i;
-                        int black_square = square ^ 0b111000;
+                    out_white = opp_ptr + offset;
+                    out_black = stm_ptr + offset;
+                }
 
-                        if (white_mirror) square ^= 0b111;
-                        if (black_mirror) black_square ^= 0b111;
+                bool white_mirror = (pos.white_king % 8) > 3;
+                bool black_mirror = (pos.black_king % 8) > 3;
 
-                        float* ft_opp = out_opp + square * 12;
-                        float* ft_stm = out_stm + black_square * 12;
+                uint64_t occupancy = pos.occupancy;
+                int num_pieces = __builtin_popcountll(occupancy);
+                for (int i = 0; i < num_pieces; i++) {
+                    int idx = i / 2;
+                    int white_piece = (pos.pieces[idx] >> (4 * (i % 2))) & 0xF;
+                    int black_piece = white_piece <= 5 ? white_piece + 6 : white_piece - 6;
 
-                        int pc0 = index % 13;
-                        index /= 13;
-                        int pc1 = index % 13;
-                        index /= 13;
-                        int pc2 = index % 13;
-                        index /= 13;
-                        int pc3 = index % 13;
+                    int white_square = __builtin_ctzll(occupancy);
+                    int black_square = white_square ^ 0b111000;
+                    white_square ^= white_mirror * 0b111;
+                    black_square ^= black_mirror * 0b111;
 
-                        if (pc0) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 0 : NUM_PIECES * 0;
-                            int black_offset = black_mirror ? -NUM_PIECES * 0 : NUM_PIECES * 0;
+                    out_white[white_square * 12 + white_piece] = 1;
+                    out_black[black_square * 12 + black_piece] = 1;
 
-                            ft_opp[white_offset + pc0 - 1] = 1;
-                            int black_piece = pc0 <= 6 ? pc0 + 5 : pc0 - 7;
-                            ft_stm[black_offset + black_piece] = 1;
-                        }
-                        if (pc1) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 1 : NUM_PIECES * 1;
-                            int black_offset = black_mirror ? -NUM_PIECES * 1 : NUM_PIECES * 1;
-
-                            ft_opp[white_offset + pc1 - 1] = 1;
-                            int black_piece = pc1 <= 6 ? pc1 + 5 : pc1 - 7;
-                            ft_stm[black_offset + black_piece] = 1;
-                        }
-                        if (pc2) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 2 : NUM_PIECES * 2;
-                            int black_offset = black_mirror ? -NUM_PIECES * 2 : NUM_PIECES * 2;
-
-                            ft_opp[white_offset + pc2 - 1] = 1;
-                            int black_piece = pc2 <= 6 ? pc2 + 5 : pc2 - 7;
-                            ft_stm[black_offset + black_piece] = 1;
-                        }
-                        if (pc3) {
-                            int white_offset = white_mirror ? -NUM_PIECES * 3 : NUM_PIECES * 3;
-                            int black_offset = black_mirror ? -NUM_PIECES * 3 : NUM_PIECES * 3;
-
-                            ft_opp[white_offset + pc3 - 1] = 1;
-                            int black_piece = pc3 <= 6 ? pc3 + 5 : pc3 - 7;
-                            ft_stm[black_offset + black_piece] = 1;
-                        }
-                    }
+                    occupancy &= occupancy - 1;
                 }
             }
         });

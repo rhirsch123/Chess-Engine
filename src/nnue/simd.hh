@@ -36,6 +36,7 @@
     #define vec_store_f32(a, b) vst1q_f32(a, b)
     #define vec_dup_f32(a) vdupq_n_f32(a)
     #define vec_add_f32(a, b) vaddq_f32(a, b)
+    #define vec_mul_f32(a, b) vmulq_f32(a, b)
     #define vec_mla_f32(a, b, c) vmlaq_f32(a, b, c) // multiply-accumulate: result[i] = a[i] + b[i] * c[i]
     #define vec_max_f32(a, b) vmaxq_f32(a, b)
     #define vec_min_f32(a, b) vminq_f32(a, b)
@@ -87,6 +88,7 @@
     #define vec_store_f32(a, b) _mm512_store_ps(a, b)
     #define vec_dup_f32(a) _mm512_set1_ps(a)
     #define vec_add_f32(a, b) _mm512_add_ps(a, b)
+    #define vec_mul_f32(a, b) _mm512_mul_ps(a, b)
     #define vec_mla_f32(a, b, c) _mm512_fmadd_ps(b, c, a)
     #define vec_max_f32(a, b) _mm512_max_ps(a, b)
     #define vec_min_f32(a, b) _mm512_min_ps(a, b)
@@ -137,6 +139,7 @@
     #define vec_store_f32(a, b) _mm256_store_ps(a, b)
     #define vec_dup_f32(a) _mm256_set1_ps(a)
     #define vec_add_f32(a, b) _mm256_add_ps(a, b)
+    #define vec_mul_f32(a, b) _mm256_mul_ps(a, b);
     #define vec_mla_f32(a, b, c) _mm256_fmadd_ps(b, c, a)
     #define vec_max_f32(a, b) _mm256_max_ps(a, b)
     #define vec_min_f32(a, b) _mm256_min_ps(a, b)

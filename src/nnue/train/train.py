@@ -68,14 +68,16 @@ def train(data_file, num_positions, epochs, batch_size):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}\n")
+    cuda = (device.type == "cuda")
 
     cpu_threads = 2
     torch.set_num_threads(cpu_threads)
 
-    pin = (device.type == "cuda")
-    loader = nnue_loader.NNUEBatchLoader(data_file, num_positions, pin_memory=pin)
+    loader = nnue_loader.NNUEBatchLoader(data_file, num_positions, pin_memory=cuda)
 
     model = NNUE().to(device)
+    if cuda:
+        model = torch.compile(model)
 
     adamw_params = []
     adam_params = []
@@ -126,7 +128,6 @@ def train(data_file, num_positions, epochs, batch_size):
 
             opt.zero_grad()
             out = model(x_stm, x_opp)
-
             target = torch.sigmoid(ev.float() / SCALE).squeeze(-1)
             loss = loss_fn(out, target)
             loss.backward()
