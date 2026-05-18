@@ -29,6 +29,11 @@
 
     #define vec_load_i16(a) vld1q_s16(a)
     #define vec_store_i16(a, b) vst1q_s16(a, b)
+    #define vec_dup_i16(a) vdupq_n_s16(a)
+    #define vec_max_i16(a, b) vmaxq_s16(a, b)
+    #define vec_min_i16(a, b) vminq_s16(a, b)
+    #define vec_shl_i16(a, b) vshlq_n_s16(a, b)
+    #define vec_mulhi_16(a, b) vqdmulhq_s16(a, b)
     #define vec_load_i8(a) vld1q_s8(a)
     #define vec_store_u8(a, b) vst1q_u8(a, b)
     #define vec_dup_u32(a) vdupq_n_u32(a)
@@ -64,10 +69,6 @@
         }
     #endif
 
-    static const vec_i16 v_zero_i16 = vdupq_n_s16(0);
-    static const vec_i32 v_zero_i32 = vdupq_n_s32(0);
-    static const vec_f32 v_zero_f32 = vdupq_n_f32(0);
-
 #elif USE_AVX512
 
     #define REGISTER_WIDTH 512
@@ -81,6 +82,11 @@
 
     #define vec_load_i16(a) _mm512_load_si512(reinterpret_cast<const __m512i *>(a))
     #define vec_store_i16(a, b) _mm512_store_si512(reinterpret_cast<__m512i *>(a), b)
+    #define vec_dup_i16(a) _mm512_set1_epi16(a)
+    #define vec_max_i16(a, b) _mm512_max_epi16(a, b)
+    #define vec_min_i16(a, b) _mm512_min_epi16(a, b)
+    #define vec_shl_i16(a, b) _mm512_slli_epi16(a, b)
+    #define vec_mulhi_16(a, b) _mm512_mulhi_epu16(a, b)
     #define vec_load_i8(a) _mm512_load_si512(reinterpret_cast<const __m512i *>(a))
     #define vec_store_u8(a, b) _mm512_store_si512(reinterpret_cast<__m512i *>(a), b)
     #define vec_dup_u32(a) _mm512_set1_epi32(a)
@@ -108,10 +114,6 @@
         return _mm512_add_epi32(a, dot);
     }
 
-    static const vec_i16 v_zero_i16 = _mm512_setzero_si512();
-    static const vec_i32 v_zero_i32 = _mm512_setzero_si512();
-    static const vec_f32 v_zero_f32 = _mm512_setzero_ps();
-
     static const __m512i vec_squares = _mm512_set_epi8(
         63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48,
         47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32,
@@ -132,6 +134,11 @@
 
     #define vec_load_i16(a) _mm256_load_si256(reinterpret_cast<const __m256i *>(a))
     #define vec_store_i16(a, b) _mm256_store_si256(reinterpret_cast<__m256i *>(a), b)
+    #define vec_dup_i16(a) _mm256_set1_epi16(a)
+    #define vec_max_i16(a, b) _mm256_max_epi16(a, b)
+    #define vec_min_i16(a, b) _mm256_min_epi16(a, b)
+    #define vec_shl_i16(a, b) _mm256_slli_epi16(a, b)
+    #define vec_mulhi_16(a, b) _mm256_mulhi_epu16(a, b)
     #define vec_load_i8(a) _mm256_load_si256(reinterpret_cast<const __m256i *>(a))
     #define vec_store_u8(a, b) _mm256_store_si256(reinterpret_cast<__m256i *>(a), b)
     #define vec_dup_u32(a) _mm256_set1_epi32(a)
@@ -166,11 +173,11 @@
         return _mm_cvtss_f32(_mm_add_ps(low, high));
     }
 
-    static const vec_i16 v_zero_i16 = _mm256_setzero_si256();
-    static const vec_i32 v_zero_i32 = _mm256_setzero_si256();
-    static const vec_f32 v_zero_f32 = _mm256_setzero_ps();
-
 #endif
 
+    static const vec_i16 v_zero_i16 = vec_dup_i16(0);
+    static const vec_i32 v_zero_i32 = vec_dup_u32(0);
+    static const vec_f32 v_zero_f32 = vec_dup_f32(0);
+    static const vec_f32 v_one_f32 =  vec_dup_f32(1.0);
 
 #endif

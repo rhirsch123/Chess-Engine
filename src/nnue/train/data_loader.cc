@@ -81,7 +81,6 @@ namespace {
 }
 
 
-
 class NNUEBatchLoader {
 public:
 
@@ -148,7 +147,7 @@ public:
                 for (int i = 0; i < num_pieces; i++) {
                     int idx = i / 2;
                     int white_piece = (pos.pieces[idx] >> (4 * (i % 2))) & 0xF;
-                    int black_piece = white_piece <= 5 ? white_piece + 6 : white_piece - 6;
+                    int black_piece = white_piece - 6 + 12 * (white_piece <= 5);
 
                     int white_square = __builtin_ctzll(occupancy);
                     int black_square = white_square ^ 0b111000;
@@ -173,7 +172,6 @@ private:
     MMapFile data_map;
     const DataPoint* data = nullptr;
 };
-
 
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

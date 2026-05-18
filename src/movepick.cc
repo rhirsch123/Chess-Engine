@@ -1,7 +1,7 @@
 #include "movepick.hh"
 
-MovePicker::MovePicker(Position& position, Engine& engine, int current_depth, bool only_tactics)
-: position(position), engine(engine), current_depth(current_depth), only_tactics(only_tactics) {}
+MovePicker::MovePicker(Position& position, Engine& engine, int current_depth, Move hash_move, bool only_tactics)
+: position(position), engine(engine), current_depth(current_depth), hash_move(hash_move), only_tactics(only_tactics) {}
 
 template<MoveGenType Type>
 void MovePicker::get_sorted_moves() {
@@ -24,15 +24,17 @@ void MovePicker::get_sorted_moves() {
     } else {
         for (Move move : buffer) {
             int score = 0;
-            score += (1 << 30) * (move == engine.killers[current_depth][0]);
-            score += (1 << 29) * (move == engine.killers[current_depth][1]);
 
-            score += engine.quiet_history[move.from()][move.to()];
+            score += 16384 * (move == engine.killers[current_depth][0]);
+            score += 8192 * (move == engine.killers[current_depth][1]);
+
+            score += 2 * engine.quiet_history[move.from()][move.to()];
 
             // continuation history
             int piece = position.board[move.from()] - 1;
             int ply = current_depth + MAX_CH_PLY;
             score += engine.cont_history[ply - 1][move.to()][piece];
+            score += engine.cont_history[ply - 2][move.to()][piece];
 
             scored_moves.add(ScoredMove(move, score));
         }
@@ -46,7 +48,10 @@ void MovePicker::get_sorted_moves() {
 
 Move MovePicker::next_move() {
     Move move;
-    if (stage == GOOD_TACTICS) {
+    if (stage == HASH_MOVE) {
+        move = hash_move;
+        stage = GOOD_TACTICS;
+    } else if (stage == GOOD_TACTICS) {
         if (index == 0) {
             get_sorted_moves<TACTIC>();
         }
@@ -94,7 +99,7 @@ Move MovePicker::next_move() {
         }
     }
     
-    if (move && is_legal(position, move)) {
+    if (move && (move != hash_move || (stage == HASH_MOVE + 1 && index == 0)) && is_legal(position, move)) {
         return move;
     }
     return next_move();

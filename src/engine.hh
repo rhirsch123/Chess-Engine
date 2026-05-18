@@ -91,8 +91,8 @@ public:
     int LMR_CAPTURE = 1024;
     int LMR_HISTORY = 2400;
     int LMR_GIVES_CHECK = 1024;
-    int FUTILITY_PRUNE_BASE = 100;
-    int FUTILITY_PRUNE_SCALE = 100;
+    int FP_BASE = 100;
+    int FP_SCALE = 100;
     int FP_CAP_SCALE = 250;
     int FP_CAP_BASE = 210;
     int SEE_PRUNE_SCALE = 100;

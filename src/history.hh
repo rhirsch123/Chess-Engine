@@ -5,7 +5,7 @@
 #include "move.hh"
 
 static constexpr int MAX_HISTORY = 16384;
-static constexpr int MAX_CH_PLY = 1;
+static constexpr int MAX_CH_PLY = 2;
 
 // [from_square][to_square]
 using QuietHistory = int[64][64];
@@ -43,6 +43,7 @@ inline void update_continuation_history(ContinuationHistory& cont_history, int p
     // avoid negative indexing when ply is too low
     ply += MAX_CH_PLY;
     update_history_entry(cont_history[ply - 1][to][piece], update);
+    update_history_entry(cont_history[ply - 2][to][piece], update);
 }
 
 inline void update_capture_history(CaptureHistory& capture_history, int to, int piece_type, int capture, int depth, bool good) {

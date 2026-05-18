@@ -21,11 +21,6 @@ static inline int get_milli_duration(time_point start) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
 }
 
-// check for hash collision
-static inline bool valid_move(Position& position, Move move) {
-    return is_psuedo_legal(position, move) && is_legal(position, move);
-}
-
 void Engine::make_move(Position& position, Move move, int ply) {    
     total_nodes++;
     stack[ply].move = move;
@@ -54,7 +49,7 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
 
     if (transposition_found && tt.best_move) {
         hash_move = Move(tt.best_move);
-        if (!valid_move(position, hash_move)) {
+        if (!is_psuedo_legal(position, hash_move) || !is_legal(position, hash_move)) {
             transposition_found = false;
             hash_move = Move();
         }
@@ -111,7 +106,7 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
 
     bool in_check = position.checkers;
 
-    MovePicker move_picker(position, *this, current_depth, true);
+    MovePicker move_picker(position, *this, current_depth, Move(), true);
     while (true) {
         Move move = move_picker.next_move();
         if (!move) {
@@ -183,7 +178,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
     if (transposition_found && tt.best_move) {
         hash_move = Move(tt.best_move);
         // careful of hash collisions
-        if (!valid_move(position, hash_move)) {
+        if (!is_psuedo_legal(position, hash_move)) {
             transposition_found = false;
             hash_move = Move();
         }
@@ -278,104 +273,40 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
     }
 
     int local_max = -INF;
+    Move local_best_move;
+    int move_num = 0;
+    int moves_played = 0;
 
-    // can check hash move before generating other moves
-    if (hash_move && hash_move != exclude_move) {
-        int extension = 0;
-
-        // singular extension: hash move seems to be significantly better than all others
-        if (!root_node && remaining_depth >= 6 && (tt.type == LOWER_BOUND || tt.type == EXACT) &&
-            tt.depth >= remaining_depth - 3 && !exclude_move) {
-
-            int singular_depth = remaining_depth / 2;
-            int singular_beta = tt.value - remaining_depth;
-            int val = negamax(position, singular_depth, current_depth + 1, singular_beta - 1, singular_beta, hash_move);
-
-            if (val < singular_beta) {
-                extension++;
-            }
-        }
-
-        make_move(position, hash_move, current_depth);
-
-        extension += (position.checkers != 0ULL);
-        int val = -negamax(position, remaining_depth - 1 + extension, current_depth + 1, -beta, -alpha);
-        
-        position.pop();
-
-        // stopped search
-        if (std::abs(val) > MATE_SCORE) {
-            return val;
-        }
-
-        if (val > local_max) {
-            local_max = val;
-        }
-
-        int from_square = hash_move.from();
-        int to_square = hash_move.to();
-
-        if (local_max >= beta) {
-            int capture = position.board[to_square];
-            if (!capture) {
-                update_quiet_history(quiet_history, from_square, to_square, remaining_depth, true);
-                update_continuation_history(cont_history, current_depth, to_square, position.board[from_square] - 1, remaining_depth, true);
-                update_killers(killers, hash_move, current_depth);
-            } else {
-                int piece_type = Position::get_piece_type(position.board[from_square]);
-                int capture_type = Position::get_piece_type(capture);
-                update_capture_history(capture_history, to_square, piece_type, capture_type, remaining_depth, true);
-            }
-
-            if (!exclude_move) {
-                transposition_table.insert(
-                    position.hash_value,
-                    (int16_t) local_max,
-                    (int16_t) static_eval,
-                    hash_move.move,
-                    LOWER_BOUND,
-                    (int8_t) remaining_depth
-                );
-            }
-
-            return local_max;
-        }
-
-        alpha = std::max(alpha, local_max);
-    }
-
-    MovePicker move_picker(position, *this, current_depth);
-
-    Move local_best_move = hash_move;
-    int move_num, moves_played;
-    move_num = moves_played = local_max > -INF;
-
+    // move loop 
+    MovePicker move_picker(position, *this, current_depth, hash_move);
     while (true) {
         Move move = move_picker.next_move();
         if (!move) {
             break;
         }
 
-        // already tried hash move
-        if (move == hash_move || move == exclude_move) {
+        if (move == exclude_move) {
             continue;
         }
-        move_num++;
 
+        int piece = position.board[move.from()];
         int capture = position.board[move.to()];
+        int piece_type = Position::get_piece_type(piece);
+        int capture_type = Position::get_piece_type(capture);
 
+        move_num++;
         bool move_found = local_max > -INF;
+
         if (move_found && !root_node && !in_check) {
             // late move pruning
-            if (remaining_depth <= 5 && move_picker.stage <= QUIETS) {
-                if (move_num >= lmp_table[remaining_depth][improving]) {
-                    if (move_picker.stage == QUIETS) {
-                        move_picker.index = 0;
-                        move_picker.stage = BAD_TACTICS;
-                        continue;
-                    } else {
-                        move_picker.only_tactics = true;
-                    }
+            if (remaining_depth <= 5 && move_picker.stage <= QUIETS
+                && move_num >= lmp_table[remaining_depth][improving]) {
+                if (move_picker.stage == QUIETS) {
+                    move_picker.index = 0;
+                    move_picker.stage = BAD_TACTICS;
+                    continue;
+                } else {
+                    move_picker.only_tactics = true;
                 }
             }
 
@@ -383,7 +314,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             // if static eval is well below alpha, quiet moves and bad tactics are unlikely to improve
             // the position enough to matter
             if (remaining_depth <= 6 && move_picker.stage <= QUIETS
-                && static_eval + FUTILITY_PRUNE_BASE + FUTILITY_PRUNE_SCALE * remaining_depth <= alpha) {
+                && static_eval + FP_BASE + FP_SCALE * remaining_depth <= alpha) {
                 if (move_picker.stage == QUIETS) {
                     move_picker.index = 0;
                     move_picker.stage = BAD_TACTICS;
@@ -394,8 +325,6 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             }
 
             if (remaining_depth <= 4 && capture && move_picker.stage == BAD_TACTICS) {
-                int piece_type = Position::get_piece_type(position.board[move.from()]);
-                int capture_type = Position::get_piece_type(capture);
                 int hist = capture_history[move.to()][piece_type][capture_type];
                 if (static_eval + FP_CAP_BASE + FP_CAP_SCALE * remaining_depth +
                     piece_values[capture_type] + hist / 8 <= alpha) {
@@ -412,12 +341,23 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             }
         }
 
-        moves_played++;
+        // singular extension: hash move seems to be significantly better than all others
+        int extension = 0;
+        if (move == hash_move && !root_node && remaining_depth >= 6 && (tt.type == LOWER_BOUND || tt.type == EXACT)
+            && tt.depth >= remaining_depth - 3 && !exclude_move) {
+            int singular_depth = remaining_depth / 2;
+            int singular_beta = tt.value - remaining_depth;
+            int val = negamax(position, singular_depth, current_depth + 1, singular_beta - 1, singular_beta, hash_move);
+
+            if (val < singular_beta) {
+                extension = 1;
+            }
+        }
 
         // late move reduction: assumes decent move ordering, reduce search depth of late ordered moves
         int R = 0; // can be negative for extensions
 
-        if (!pv_node && moves_played >= 3 && remaining_depth >= 3) {
+        if (!pv_node && moves_played >= 2 && remaining_depth >= 3) {
             R = lmr_table[remaining_depth][moves_played];
             R += tt_capture * LMR_TTCAP;
             
@@ -434,6 +374,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
         if (position.checkers && (move_picker.stage == GOOD_TACTICS)) {
             R -= LMR_GIVES_CHECK;
+            extension++;
         }
 
         R /= 1024;
@@ -442,7 +383,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
         int val;
         if (!move_found) { // first move
-            val = -negamax(position, remaining_depth - 1, current_depth + 1, -beta, -alpha);
+            val = -negamax(position, remaining_depth - 1 + extension, current_depth + 1, -beta, -alpha);
         } else {
             val = -negamax(position, remaining_depth - 1 - R, current_depth + 1, -alpha - 1, -alpha);
 
@@ -453,6 +394,8 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         }
 
         position.pop();
+
+        moves_played++;
 
         // stopped search
         if (std::abs(val) > MATE_SCORE) {
@@ -470,11 +413,9 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         if (local_max >= beta) {
             if (!capture) {
                 update_quiet_history(quiet_history, from_square, to_square, remaining_depth, true);
-                update_continuation_history(cont_history, current_depth, to_square, position.board[from_square] - 1, remaining_depth, true);
+                update_continuation_history(cont_history, current_depth, to_square, piece - 1, remaining_depth, true);
                 update_killers(killers, move, current_depth);
             } else {
-                int piece_type = Position::get_piece_type(position.board[from_square]);
-                int capture_type = Position::get_piece_type(capture);
                 update_capture_history(capture_history, to_square, piece_type, capture_type, remaining_depth, true);
             }
 
@@ -484,10 +425,8 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         // decrease history if move did not beat beta
         if (!capture) {
             update_quiet_history(quiet_history, from_square, to_square, remaining_depth, false);
-            update_continuation_history(cont_history, current_depth, to_square, position.board[from_square] - 1, remaining_depth, false);
+            update_continuation_history(cont_history, current_depth, to_square, piece - 1, remaining_depth, false);
         } else {
-            int piece_type = Position::get_piece_type(position.board[from_square]);
-            int capture_type = Position::get_piece_type(capture);
             update_capture_history(capture_history, to_square, piece_type, capture_type, remaining_depth, false);
         }
 

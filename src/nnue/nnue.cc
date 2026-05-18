@@ -102,16 +102,6 @@ namespace NNUE {
             }
         }
 
-        for (int i = 0; i < L2_SIZE; i++) {
-            l2_biases[i] *= QA * QB;
-        }
-
-        for (int i = 0; i < L3_SIZE; i++) {
-            l3_biases[i] *= QA * QB;
-        }
-
-        output_bias *= QA * QB;
-
         free(fl1_weights);
         free(fl2_weights_stm);
         free(fl2_weights_opp);
@@ -160,7 +150,7 @@ namespace NNUE {
         acc_info[ply].clean = true;
     }
 
-    static inline int crelu(int x, int max) {
+    static inline float crelu(float x, float max) {
         return x < 0 ? 0 : (x > max ? max : x);
     }
 
@@ -174,12 +164,15 @@ namespace NNUE {
         int16_t* acc_stm = accumulators[ply][turn];
         int16_t* acc_opp = accumulators[ply][!turn];
 
-        float l2_layer[L2_SIZE];
-        std::memcpy(l2_layer, l2_biases, L2_SIZE * sizeof(float));
+        float l2_layer[L2_SIZE] = {};
         for (int i = 0; i < L1_SIZE / 4; i++) {
             for (int k = 0; k < 4; k++) {
-                int a_stm = crelu(acc_stm[i * 4 + k], QA);
-                int a_opp = crelu(acc_opp[i * 4 + k], QA);
+                // screlu
+                float a_stm = crelu(acc_stm[i * 4 + k], QA);
+                float a_opp = crelu(acc_opp[i * 4 + k], QA);
+                a_stm *= a_stm;
+                a_opp *= a_opp;
+
                 for (int j = 0; j < L2_SIZE; j++) {
                     l2_layer[j] += a_stm * l2_weights[i][j * 4 + k];
                     l2_layer[j] += a_opp * l2_weights[i + L1_SIZE / 4][j * 4 + k];
@@ -188,7 +181,8 @@ namespace NNUE {
         }
 
         for (int i = 0; i < L2_SIZE; i++) {
-            l2_layer[i] = crelu(l2_layer[i], QA * QB);
+            float f = l2_biases[i] + l2_layer[i] / float(QA * QA * QB);
+            l2_layer[i] = crelu(f, 1.0);
         }
 
         float l3_layer[L3_SIZE];
@@ -200,7 +194,7 @@ namespace NNUE {
         }
 
         for (int i = 0; i < L3_SIZE; i++) {
-            l3_layer[i] = crelu(l3_layer[i], QA * QB);
+            l3_layer[i] = crelu(l3_layer[i], 1.0);
         }
 
         float output = output_bias;
@@ -208,7 +202,7 @@ namespace NNUE {
             output += l3_layer[i] * output_weights[i];
         }
 
-        return output * (float) SCALE / (QA * QB);
+        return output * float(SCALE);
     }
 
 
@@ -273,7 +267,7 @@ namespace NNUE {
     }
 
 
-    // apply crelu activation to the accumulator and populate active_indices
+    // apply screlu activation to the accumulator and populate active_indices
     // with the indices of nonzero groups of four adjacent values
     void activate_accumulators(int ply, int turn) {
         num_active = 0;
@@ -295,6 +289,8 @@ namespace NNUE {
             const __m128i increment = _mm_set1_epi16(8);
         #endif
 
+        const vec_i16 v_qa_i16 = vec_dup_i16(QA);
+
         for (int i = 0; i < 2; i++) {
             // side to move first, then opponent
             int16_t* acc = accumulators[ply][turn ^ i];
@@ -305,9 +301,30 @@ namespace NNUE {
                 vec_i16 v2 = vec_load_i16(acc + j + jump16 * 2);
                 vec_i16 v3 = vec_load_i16(acc + j + jump16 * 3);
 
-                // unsigned saturation for crelu because the quantized 1.0 is 255
-                vec_u8 activated0 = vec_packus_ordered_i16(v0, v1);
-                vec_u8 activated1 = vec_packus_ordered_i16(v2, v3);
+                v0 = vec_max_i16(v0, v_zero_i16);
+                v0 = vec_min_i16(v0, v_qa_i16);
+                v1 = vec_max_i16(v1, v_zero_i16);
+                v1 = vec_min_i16(v1, v_qa_i16);
+                v2 = vec_max_i16(v2, v_zero_i16);
+                v2 = vec_min_i16(v2, v_qa_i16);
+                v3 = vec_max_i16(v3, v_zero_i16);
+                v3 = vec_min_i16(v3, v_qa_i16);
+
+                // the neon mulhi instruction doubles the result
+                #if USE_NEON
+                    static constexpr int SHIFT = 7;
+                #else
+                    static constexpr int SHIFT = 8;
+                #endif
+
+                vec_i16 screlu0 = vec_mulhi_16(v0, vec_shl_i16(v0, SHIFT));
+                vec_i16 screlu1 = vec_mulhi_16(v1, vec_shl_i16(v1, SHIFT));
+                vec_i16 screlu2 = vec_mulhi_16(v2, vec_shl_i16(v2, SHIFT));
+                vec_i16 screlu3 = vec_mulhi_16(v3, vec_shl_i16(v3, SHIFT));
+
+                vec_u8 activated0 = vec_packus_ordered_i16(screlu0, screlu1);
+                vec_u8 activated1 = vec_packus_ordered_i16(screlu2, screlu3);
+
                 vec_store_u8(activated_accumulators + i * L1_SIZE + j, activated0);
                 vec_store_u8(activated_accumulators + i * L1_SIZE + j + jump8, activated1);
 
@@ -321,7 +338,8 @@ namespace NNUE {
 
                 uint16x8_t combined = vcombine_u16(
                     vqmovn_u32(vtstq_u32(grouped0, grouped0)),
-                    vqmovn_u32(vtstq_u32(grouped1, grouped1)));
+                    vqmovn_u32(vtstq_u32(grouped1, grouped1))
+                );
                 
                 uint8_t mask = vaddvq_u16(vandq_u16(combined, vld1q_u16(nnz_mask)));
                 uint16x8_t indices = vld1q_u16(active_table[mask]);
@@ -400,12 +418,18 @@ namespace NNUE {
             }
         }
 
-        const vec_f32 v_qaqb_f32 = vec_dup_f32(QA * QB);
+        const vec_f32 v_L2_norm = vec_dup_f32(float(1 << 8) / float(QA * QA * QB));
 
         for (int i = 0; i < l2_chunks; i++) {
-            vec_f32 v = vec_add_f32(vec_i32_to_f32(l2_acc[i]), vec_load_f32(l2_biases + jump32 * i));
+            // convert to floats and normalize
+            vec_f32 v = vec_i32_to_f32(l2_acc[i]);
+            v = vec_mul_f32(v, v_L2_norm);
+            v = vec_add_f32(v, vec_load_f32(l2_biases + jump32 * i));
+
+            // crelu
             v = vec_max_f32(v, v_zero_f32);
-            v = vec_min_f32(v, v_qaqb_f32);
+            v = vec_min_f32(v, v_one_f32);
+
             vec_store_f32(l2_buff + jump32 * i, v);
         }
 
@@ -423,12 +447,12 @@ namespace NNUE {
         vec_f32 acc = v_zero_f32;
         for (int i = 0; i < l3_chunks; i++) {
             vec_f32 l3 = vec_max_f32(l3_acc[i], v_zero_f32);
-            l3 = vec_min_f32(l3, v_qaqb_f32);
+            l3 = vec_min_f32(l3, v_one_f32);
             vec_f32 w = vec_load_f32(output_weights + jump32 * i);
             acc = vec_mla_f32(acc, l3, w);
         }
 
-        int output = output_bias + vec_sum_f32(acc);
-        return output * (float) SCALE / (QA * QB);
+        float output = output_bias + vec_sum_f32(acc);
+        return output * float(SCALE);
     }
 }
