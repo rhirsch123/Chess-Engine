@@ -3,11 +3,11 @@
 namespace NNUE {
     alignas(64) int16_t accumulators[1024][2][L1_SIZE];
     alignas(64) AccInfo acc_info[1024];
-    alignas(64) uint8_t activated_accumulators[L1_SIZE * 2];
+    alignas(64) uint8_t activated_accumulators[L1_SIZE];
 
     alignas(64) int16_t l1_weights[INPUT_SIZE][L1_SIZE];
     alignas(64) int16_t l1_biases[L1_SIZE];
-    alignas(64) int8_t l2_weights[L1_SIZE / 2][L2_SIZE * 4];
+    alignas(64) int8_t l2_weights[L1_SIZE / 4][L2_SIZE * 4];
     alignas(64) float l2_biases[L2_SIZE];
     alignas(64) float l3_weights[L2_SIZE][L3_SIZE];
     alignas(64) float l3_biases[L3_SIZE];
@@ -24,7 +24,7 @@ namespace NNUE {
     alignas(64) float l2_buff[L2_SIZE];
     alignas(64) vec_f32 l3_acc[l3_chunks];
 
-    alignas(64) uint16_t active_indices[L1_SIZE];
+    alignas(64) uint16_t active_indices[L1_SIZE / 4];
     int num_active = 0;
 
     #if USE_NEON || USE_AVX2
@@ -61,16 +61,18 @@ namespace NNUE {
             return;
         }
 
-        float * fl1_weights = (float *) malloc(INPUT_SIZE * L1_SIZE * sizeof(float));
+        float* fl1_weights = (float *) malloc(INPUT_SIZE * L1_SIZE * sizeof(float));
         float fl1_biases[L1_SIZE];
-        float * fl2_weights_stm = (float *) malloc(L1_SIZE * L2_SIZE * sizeof(float));
-        float * fl2_weights_opp = (float *) malloc(L1_SIZE * L2_SIZE * sizeof(float));
+
+        constexpr size_t l2_read_size = (L1_SIZE / 2) * L2_SIZE * sizeof(float);
+        float* fl2_weights_stm = (float*) malloc(l2_read_size);
+        float* fl2_weights_opp = (float*) malloc(l2_read_size);
 
         in.read(reinterpret_cast<char *>(fl1_weights), INPUT_SIZE * L1_SIZE * sizeof(float));
         in.read(reinterpret_cast<char *>(fl1_biases), sizeof(fl1_biases));
 
-        in.read(reinterpret_cast<char *>(fl2_weights_stm), L1_SIZE * L2_SIZE * sizeof(float));
-        in.read(reinterpret_cast<char *>(fl2_weights_opp), L1_SIZE * L2_SIZE * sizeof(float));
+        in.read(reinterpret_cast<char *>(fl2_weights_stm), l2_read_size);
+        in.read(reinterpret_cast<char *>(fl2_weights_opp), l2_read_size);
         in.read(reinterpret_cast<char *>(l2_biases), sizeof(l2_biases));
 
         in.read(reinterpret_cast<char *>(l3_weights), sizeof(l3_weights));
@@ -91,12 +93,12 @@ namespace NNUE {
         }
 
         // l2_weights are grouped by four and side-to-move and opponent weights are concatenated
-        for (int i = 0; i < L1_SIZE / 4; i++) {
+        for (int i = 0; i < L1_SIZE / 8; i++) {
             for (int j = 0; j < L2_SIZE; j++) {
                 for (int k = 0; k < 4; k++) {
                     l2_weights[i][j * 4 + k] =
                       static_cast<int8_t>(std::round(fl2_weights_stm[(i * 4 + k) * L2_SIZE + j] * QB));
-                    l2_weights[i + L1_SIZE / 4][j * 4 + k] =
+                    l2_weights[i + L1_SIZE / 8][j * 4 + k] =
                       static_cast<int8_t>(std::round(fl2_weights_opp[(i * 4 + k) * L2_SIZE + j] * QB));
                 }
             }
@@ -164,32 +166,31 @@ namespace NNUE {
         int16_t* acc_stm = accumulators[ply][turn];
         int16_t* acc_opp = accumulators[ply][!turn];
 
-        float l2_layer[L2_SIZE] = {};
-        for (int i = 0; i < L1_SIZE / 4; i++) {
+        int l2_layer[L2_SIZE] = {};
+        for (int i = 0; i < L1_SIZE / 8; i++) {
             for (int k = 0; k < 4; k++) {
-                // screlu
-                float a_stm = crelu(acc_stm[i * 4 + k], QA);
-                float a_opp = crelu(acc_opp[i * 4 + k], QA);
-                a_stm *= a_stm;
-                a_opp *= a_opp;
+                int stm0 = crelu(acc_stm[i * 4 + k], QA);
+                int opp0 = crelu(acc_opp[i * 4 + k], QA);
+                int stm1 = crelu(acc_stm[i * 4 + k + L1_SIZE / 2], QA);
+                int opp1 = crelu(acc_opp[i * 4 + k + L1_SIZE / 2], QA);
+
+                int pw_stm = (stm0 * stm1) / 512;
+                int pw_opp = (opp0 * opp1) / 512;
 
                 for (int j = 0; j < L2_SIZE; j++) {
-                    l2_layer[j] += a_stm * l2_weights[i][j * 4 + k];
-                    l2_layer[j] += a_opp * l2_weights[i + L1_SIZE / 4][j * 4 + k];
+                    l2_layer[j] += pw_stm * l2_weights[i][j * 4 + k];
+                    l2_layer[j] += pw_opp * l2_weights[i + L1_SIZE / 8][j * 4 + k];
                 }
             }
-        }
-
-        for (int i = 0; i < L2_SIZE; i++) {
-            float f = l2_biases[i] + l2_layer[i] / float(QA * QA * QB);
-            l2_layer[i] = crelu(f, 1.0);
         }
 
         float l3_layer[L3_SIZE];
         std::memcpy(l3_layer, l3_biases, L3_SIZE * sizeof(float));
         for (int i = 0; i < L2_SIZE; i++) {
+            float l2 = l2_biases[i] + float(l2_layer[i] * 512) / float(QA * QA * QB);
+            l2 = crelu(l2, 1.0);
             for (int j = 0; j < L3_SIZE; j++) {
-                l3_layer[j] += l2_layer[i] * l3_weights[i][j];
+                l3_layer[j] += l2 * l3_weights[i][j];
             }
         }
 
@@ -267,7 +268,7 @@ namespace NNUE {
     }
 
 
-    // apply screlu activation to the accumulator and populate active_indices
+    // apply crelu + pairwise multiplication to the accumulator and populate active_indices
     // with the indices of nonzero groups of four adjacent values
     void activate_accumulators(int ply, int turn) {
         num_active = 0;
@@ -295,38 +296,56 @@ namespace NNUE {
             // side to move first, then opponent
             int16_t* acc = accumulators[ply][turn ^ i];
 
-            for (int j = 0; j < L1_SIZE; j += jump16 * 4) {
-                vec_i16 v0 = vec_load_i16(acc + j);
-                vec_i16 v1 = vec_load_i16(acc + j + jump16);
-                vec_i16 v2 = vec_load_i16(acc + j + jump16 * 2);
-                vec_i16 v3 = vec_load_i16(acc + j + jump16 * 3);
+            for (int j = 0; j < L1_SIZE / 2; j += jump16 * 4) {
+                vec_i16 a0 = vec_load_i16(acc + j);
+                vec_i16 b0 = vec_load_i16(acc + j + jump16);
+                vec_i16 c0 = vec_load_i16(acc + j + jump16 * 2);
+                vec_i16 d0 = vec_load_i16(acc + j + jump16 * 3);
+                vec_i16 a1 = vec_load_i16(acc + j + L1_SIZE / 2);
+                vec_i16 b1 = vec_load_i16(acc + j + L1_SIZE / 2 + jump16);
+                vec_i16 c1 = vec_load_i16(acc + j + L1_SIZE / 2 + jump16 * 2);
+                vec_i16 d1 = vec_load_i16(acc + j + L1_SIZE / 2 + jump16 * 3);
 
-                v0 = vec_max_i16(v0, v_zero_i16);
-                v0 = vec_min_i16(v0, v_qa_i16);
-                v1 = vec_max_i16(v1, v_zero_i16);
-                v1 = vec_min_i16(v1, v_qa_i16);
-                v2 = vec_max_i16(v2, v_zero_i16);
-                v2 = vec_min_i16(v2, v_qa_i16);
-                v3 = vec_max_i16(v3, v_zero_i16);
-                v3 = vec_min_i16(v3, v_qa_i16);
+            #if USE_NEON
 
-                // the neon mulhi instruction doubles the result
-                #if USE_NEON
-                    static constexpr int SHIFT = 7;
-                #else
-                    static constexpr int SHIFT = 8;
-                #endif
+                uint16x8_t mul0 = vmull_u8(vqmovun_s16(a0), vqmovun_s16(a1));
+                uint16x8_t mul1 = vmull_u8(vqmovun_s16(b0), vqmovun_s16(b1));
+                uint16x8_t mul2 = vmull_u8(vqmovun_s16(c0), vqmovun_s16(c1));
+                uint16x8_t mul3 = vmull_u8(vqmovun_s16(d0), vqmovun_s16(d1));
 
-                vec_i16 screlu0 = vec_mulhi_16(v0, vec_shl_i16(v0, SHIFT));
-                vec_i16 screlu1 = vec_mulhi_16(v1, vec_shl_i16(v1, SHIFT));
-                vec_i16 screlu2 = vec_mulhi_16(v2, vec_shl_i16(v2, SHIFT));
-                vec_i16 screlu3 = vec_mulhi_16(v3, vec_shl_i16(v3, SHIFT));
+                uint8x16_t activated0 = vshrq_n_u8(vuzp2q_u8(vreinterpretq_u8_u16(mul0), vreinterpretq_u8_u16(mul1)), 1);
+                uint8x16_t activated1 = vshrq_n_u8(vuzp2q_u8(vreinterpretq_u8_u16(mul2), vreinterpretq_u8_u16(mul3)), 1);
 
-                vec_u8 activated0 = vec_packus_ordered_i16(screlu0, screlu1);
-                vec_u8 activated1 = vec_packus_ordered_i16(screlu2, screlu3);
+            #else
 
-                vec_store_u8(activated_accumulators + i * L1_SIZE + j, activated0);
-                vec_store_u8(activated_accumulators + i * L1_SIZE + j + jump8, activated1);
+                a0 = vec_max_i16(a0, v_zero_i16);
+                a0 = vec_min_i16(a0, v_qa_i16);
+                a1 = vec_min_i16(a1, v_qa_i16);
+
+                b0 = vec_max_i16(b0, v_zero_i16);
+                b0 = vec_min_i16(b0, v_qa_i16);
+                b1 = vec_min_i16(b1, v_qa_i16);
+
+                c0 = vec_max_i16(c0, v_zero_i16);
+                c0 = vec_min_i16(c0, v_qa_i16);
+                c1 = vec_min_i16(c1, v_qa_i16);
+
+                d0 = vec_max_i16(d0, v_zero_i16);
+                d0 = vec_min_i16(d0, v_qa_i16);
+                d1 = vec_min_i16(d1, v_qa_i16);
+
+                vec_i16 pwa = vec_mulhi_i16(vec_shl_i16(a0, 7), a1);
+                vec_i16 pwb = vec_mulhi_i16(vec_shl_i16(b0, 7), b1);
+                vec_i16 pwc = vec_mulhi_i16(vec_shl_i16(c0, 7), c1);
+                vec_i16 pwd = vec_mulhi_i16(vec_shl_i16(d0, 7), d1);
+
+                vec_u8 activated0 = vec_packus_ordered_i16(pwa, pwb);
+                vec_u8 activated1 = vec_packus_ordered_i16(pwc, pwd);
+
+            #endif
+
+                vec_store_u8(activated_accumulators + i * (L1_SIZE / 2) + j, activated0);
+                vec_store_u8(activated_accumulators + i * (L1_SIZE / 2) + j + jump8, activated1);
 
                 // set active indices
 
@@ -334,6 +353,7 @@ namespace NNUE {
                 vec_u32 grouped1 = vec_u32(activated1);
 
             #if USE_NEON
+            
                 static constexpr uint16_t nnz_mask[8] = {1, 2, 4, 8, 16, 32, 64, 128};
 
                 uint16x8_t combined = vcombine_u16(
@@ -373,14 +393,14 @@ namespace NNUE {
 
             #elif USE_AVX2
 
-                __m256i nonzero = _mm256_xor_si256(_mm256_cmpeq_epi32(grouped0, v_zero_i32), _mm256_set1_epi32(-1));
+                __m256i nonzero =_mm256_cmpgt_epi32(grouped0, v_zero_i32);
                 int mask = _mm256_movemask_ps(_mm256_castsi256_ps(nonzero));
                 __m128i indices = _mm_load_si128(reinterpret_cast<const __m128i*>(active_table[mask]));
                 _mm_storeu_si128(reinterpret_cast<__m128i*>(active_indices + num_active), _mm_add_epi16(base, indices));
                 num_active += __builtin_popcount(mask);
                 base = _mm_add_epi16(base, increment);
 
-                nonzero = _mm256_xor_si256(_mm256_cmpeq_epi32(grouped1, v_zero_i32), _mm256_set1_epi32(-1));
+                nonzero =_mm256_cmpgt_epi32(grouped1, v_zero_i32);
                 mask = _mm256_movemask_ps(_mm256_castsi256_ps(nonzero));
                 indices = _mm_load_si128(reinterpret_cast<const __m128i*>(active_table[mask]));
                 _mm_storeu_si128(reinterpret_cast<__m128i*>(active_indices + num_active), _mm_add_epi16(base, indices));
@@ -418,7 +438,7 @@ namespace NNUE {
             }
         }
 
-        const vec_f32 v_L2_norm = vec_dup_f32(float(1 << 8) / float(QA * QA * QB));
+        const vec_f32 v_L2_norm = vec_dup_f32(float(1 << 9) / float(QA * QA * QB));
 
         for (int i = 0; i < l2_chunks; i++) {
             // convert to floats and normalize

@@ -33,7 +33,7 @@
     #define vec_max_i16(a, b) vmaxq_s16(a, b)
     #define vec_min_i16(a, b) vminq_s16(a, b)
     #define vec_shl_i16(a, b) vshlq_n_s16(a, b)
-    #define vec_mulhi_16(a, b) vqdmulhq_s16(a, b)
+    #define vec_mulhi_i16(a, b) vqdmulhq_s16(a, b)
     #define vec_load_i8(a) vld1q_s8(a)
     #define vec_store_u8(a, b) vst1q_u8(a, b)
     #define vec_dup_u32(a) vdupq_n_u32(a)
@@ -52,22 +52,8 @@
     #define vec_packus_i16(a, b) vcombine_u8(vqmovun_s16(a), vqmovun_s16(b))
     #define vec_packus_ordered_i16(a, b) vec_packus_i16(a, b)
 
-    // for each group of 4 adjacent uint8s in b and int8s in c, accumulate their dot product in a
-    #if defined(__ARM_FEATURE_MATMUL_INT8)
-        #define vec_dpbusd_i32(a, b, c) vusdotq_s32(a, b, c)
-    #else
-        inline int32x4_t vec_dpbusd_i32(int32x4_t a, uint8x16_t b, int8x16_t c) {
-            int16x8_t prod0 = vmulq_s16(
-                vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(b))),
-                vmovl_s8(vget_low_s8(c))
-            );
-            int16x8_t prod1 = vmulq_s16(
-                vreinterpretq_s16_u16(vmovl_high_u8(b)),
-                vmovl_high_s8(c)
-            );
-            return vpadalq_s16(a, vpaddq_s16(prod0, prod1));
-        }
-    #endif
+    // for each group of 4 adjacent int8s in b and c, accumulate their dot product in a
+    #define vec_dpbusd_i32(a, b, c) vdotq_s32(a, b, c)
 
 #elif USE_AVX512
 
@@ -86,7 +72,7 @@
     #define vec_max_i16(a, b) _mm512_max_epi16(a, b)
     #define vec_min_i16(a, b) _mm512_min_epi16(a, b)
     #define vec_shl_i16(a, b) _mm512_slli_epi16(a, b)
-    #define vec_mulhi_16(a, b) _mm512_mulhi_epu16(a, b)
+    #define vec_mulhi_i16(a, b) _mm512_mulhi_epi16(a, b)
     #define vec_load_i8(a) _mm512_load_si512(reinterpret_cast<const __m512i *>(a))
     #define vec_store_u8(a, b) _mm512_store_si512(reinterpret_cast<__m512i *>(a), b)
     #define vec_dup_u32(a) _mm512_set1_epi32(a)
@@ -138,7 +124,7 @@
     #define vec_max_i16(a, b) _mm256_max_epi16(a, b)
     #define vec_min_i16(a, b) _mm256_min_epi16(a, b)
     #define vec_shl_i16(a, b) _mm256_slli_epi16(a, b)
-    #define vec_mulhi_16(a, b) _mm256_mulhi_epu16(a, b)
+    #define vec_mulhi_i16(a, b) _mm256_mulhi_epi16(a, b)
     #define vec_load_i8(a) _mm256_load_si256(reinterpret_cast<const __m256i *>(a))
     #define vec_store_u8(a, b) _mm256_store_si256(reinterpret_cast<__m256i *>(a), b)
     #define vec_dup_u32(a) _mm256_set1_epi32(a)

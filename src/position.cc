@@ -91,6 +91,7 @@ void Position::set_fen(std::string fen) {
     move_stack.resize(1024);
 
     hash_value = Zobrist::get_hash(board, castle_rights, en_passant_col, turn);
+    pawn_hash = Zobrist::get_pawn_hash(piece_maps[PAWN][WHITE] | piece_maps[PAWN][BLACK]);
     position_history[0] = hash_value;
     checkers = get_attackers(lsb(piece_maps[KING][turn]), !turn);
     NNUE::reset_accumulators(*this);
@@ -164,6 +165,7 @@ void Position::make_move(Move move) {
 
     MoveInfo move_info = {
         hash_value,
+        pawn_hash,
         checkers,
         move,
         en_passant_col,
@@ -191,6 +193,10 @@ void Position::make_move(Move move) {
     board[start_square] = 0;
     hash_value ^= Zobrist::piece_table[piece - 1][start_square];
 
+    if (piece_type == PAWN) {
+        pawn_hash ^= Zobrist::pawn_table[start_square];
+    }
+
     // move piece
     piece_maps[piece_type][turn] &= ~square_bitboard(start_square);
     // unless promotion:
@@ -200,6 +206,10 @@ void Position::make_move(Move move) {
         hash_value ^= Zobrist::piece_table[capture - 1][end_square];
         int capture_type = get_piece_type(capture);
         piece_maps[capture_type][!turn] &= ~square_bitboard(end_square);
+
+        if (capture_type == PAWN) {
+            pawn_hash ^= Zobrist::pawn_table[end_square];
+        }
 
         if (turn == WHITE) {
             black_material -= piece_values[capture_type];
@@ -298,6 +308,8 @@ void Position::make_move(Move move) {
         int captured_pawn = piece == WHITE_PAWN ? BLACK_PAWN : WHITE_PAWN;
         hash_value ^= Zobrist::piece_table[captured_pawn - 1][capture_square];
         hash_value ^= Zobrist::piece_table[piece - 1][end_square];
+        pawn_hash ^= Zobrist::pawn_table[capture_square];
+        pawn_hash ^= Zobrist::pawn_table[end_square];
 
         // clear capture
         if (turn == WHITE) {
@@ -316,6 +328,10 @@ void Position::make_move(Move move) {
     } else {
         board[end_square] = piece;
         hash_value ^= Zobrist::piece_table[piece - 1][end_square];
+
+        if (piece_type == PAWN) {
+            pawn_hash ^= Zobrist::pawn_table[end_square];
+        }
     }
 
     // update castle rights
@@ -510,6 +526,7 @@ void Position::unmake_move(MoveInfo& move_info) {
     en_passant_col = move_info.prev_en_passant;
     fifty_move_count = move_info.prev_fifty_move;
     hash_value = move_info.prev_hash;
+    pawn_hash = move_info.prev_pawn_hash;
     checkers = move_info.prev_checkers;
 }
 

@@ -105,7 +105,7 @@ public:
         static constexpr int NUM_FEATURES = 768;
 
         auto feature_options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
-        auto eval_options = torch::TensorOptions().dtype(torch::kInt16).device(torch::kCPU);
+        auto eval_options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
         if (pin_memory) { 
             feature_options = feature_options.pinned_memory(true);
             eval_options = eval_options.pinned_memory(true);
@@ -120,7 +120,7 @@ public:
 
         float* stm_ptr = x_stm.data_ptr<float>();
         float* opp_ptr = x_opp.data_ptr<float>();
-        int16_t* eval_ptr = eval.data_ptr<int16_t>();
+        float* eval_ptr = eval.data_ptr<float>();
 
         // parallel over samples in the batch
         at::parallel_for(0, B, 1, [&](uint64_t low, uint64_t high) {

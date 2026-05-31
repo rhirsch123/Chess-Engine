@@ -20,7 +20,7 @@
 #include "simd.hh"
 
 #define INPUT_SIZE 768  // 64 squares * 6 pieces * 2 colors
-#define L1_SIZE 1536
+#define L1_SIZE 1792
 #define L2_SIZE 16
 #define L3_SIZE 32
 

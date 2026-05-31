@@ -16,6 +16,7 @@
 
 struct MoveInfo {
     uint64_t prev_hash;
+    uint64_t prev_pawn_hash;
     uint64_t prev_checkers;
     Move move;
     int prev_en_passant;
@@ -43,6 +44,7 @@ public:
     std::vector<MoveInfo> move_stack;
 
     uint64_t hash_value;
+    uint64_t pawn_hash;
 
     uint64_t checkers;
 

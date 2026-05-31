@@ -12,13 +12,19 @@ static inline int evaluation(Position& position) {
     return val;
 }
 
-static inline bool mate_score(int val) {
+static inline bool is_mate_score(int val) {
     return std::abs(val) >= MATE_SCORE - MAX_DEPTH;
 }
 
 static inline int get_milli_duration(time_point start) {
     auto now = std::chrono::high_resolution_clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+}
+
+
+int Engine::get_corrhist_adjustment(Position& position) {
+    int adj = PAWN_CORRHIST_WEIGHT * pawn_corrhist[position.turn][position.pawn_hash % CORRHIST_SIZE];
+    return adj / 256;
 }
 
 void Engine::make_move(Position& position, Move move, int ply) {    
@@ -70,13 +76,14 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
         }
     }
 
-    int static_eval = transposition_found ? tt.static_eval : evaluation(position);
+    int raw_eval = transposition_found ? tt.static_eval : evaluation(position);
+    int static_eval = raw_eval + get_corrhist_adjustment(position);
 
     if (!transposition_found) {
         transposition_table.insert(
             position.hash_value,
             0,
-            (int16_t) static_eval,
+            (int16_t) raw_eval,
             0,
             EXACT,
             TT_DEPTH_UNSEARCHED
@@ -201,14 +208,18 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
     bool tt_capture = hash_move && position.board[hash_move.to()];
 
-    int static_eval = transposition_found ? tt.static_eval : evaluation(position);
+    int raw_eval = transposition_found ? tt.static_eval : evaluation(position);
+    int static_eval = raw_eval;
+    if (!exclude_move) {
+        static_eval += get_corrhist_adjustment(position);
+    }
 
     // cache static eval
     if (!transposition_found) {
         transposition_table.insert(
             position.hash_value,
             0,
-            (int16_t) static_eval,
+            (int16_t) raw_eval,
             0,
             EXACT,
             TT_DEPTH_UNSEARCHED
@@ -265,7 +276,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         position.en_passant_col = ep_col;
         
         if (val >= beta) {
-            if (mate_score(val)) {
+            if (is_mate_score(val)) {
                 return beta;
             }
             return val;
@@ -450,11 +461,18 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         transposition_table.insert(
             position.hash_value,
             (int16_t) local_max,
-            (int16_t) static_eval,
+            (int16_t) raw_eval,
             local_best_move.move,
             tt_bound,
             (int8_t) remaining_depth
         );
+    }
+
+    // update correction history
+    if (!in_check && !position.board[local_best_move.to()]
+        && !(tt_bound == LOWER_BOUND && local_max <= static_eval)
+        && !(tt_bound == UPPER_BOUND && local_max >= static_eval)) {
+        update_pawn_corrhist(pawn_corrhist, position.turn, position.pawn_hash, remaining_depth, local_max - static_eval);
     }
 
     if (root_node) {
@@ -566,7 +584,7 @@ Move Engine::get_move(Position& position, SearchInfo info) {
         int time_taken = std::max(1, get_milli_duration(limits.start_time));
         if (info.uci) {
             std::string score;
-            if (mate_score(eval)) {
+            if (is_mate_score(eval)) {
                 int mate_in = eval > 0 ? ((MATE_SCORE - eval + 1) / 2) : ((-MATE_SCORE - eval) / 2);
                 score = "mate " + std::to_string(mate_in);
             } else {
@@ -607,7 +625,7 @@ Move Engine::get_move(Position& position, SearchInfo info) {
         printf("time: %f\n", (float) time_taken / 1000);
         printf("depth: %d\n", depth - 1);
 
-        if (mate_score(eval)) {
+        if (is_mate_score(eval)) {
             if (std::abs(MATE_SCORE - eval) <= 1) printf("evaluation: checkmate\n");
             else if (eval > 0) printf("evaluation: M%d\n", (MATE_SCORE - eval) / 2);
             else printf("evaluation: -M%d\n", std::abs(-MATE_SCORE - eval) / 2);
@@ -628,6 +646,7 @@ void Engine::init() {
     std::memset(capture_history, 0, sizeof(capture_history));
     std::memset(cont_history, 0, sizeof(cont_history));
     std::memset(killers, 0, sizeof(killers));
+    std::memset(pawn_corrhist, 0, sizeof(pawn_corrhist));
 
     init_lmp_table();
     init_lmr_table();

@@ -6,11 +6,13 @@ import torch.nn as nn
 from torch.utils.cpp_extension import load
 
 FEATURE_SIZE = 768
-L1_SIZE = 1536
+L1_SIZE = 1792
 L2_SIZE = 16
 L3_SIZE = 32
 
 SCALE = 400
+
+HALF_L1 = L1_SIZE // 2
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 ext_path = os.path.join(this_dir, "data_loader.cc")
@@ -27,8 +29,8 @@ class NNUE(nn.Module):
     def __init__(self):
         super().__init__()
         self.l1 = nn.Linear(FEATURE_SIZE, L1_SIZE)
-        self.l2_weight_stm = nn.Parameter(torch.empty(L1_SIZE, L2_SIZE))
-        self.l2_weight_opp = nn.Parameter(torch.empty(L1_SIZE, L2_SIZE))
+        self.l2_weight_stm = nn.Parameter(torch.empty(HALF_L1, L2_SIZE))
+        self.l2_weight_opp = nn.Parameter(torch.empty(HALF_L1, L2_SIZE))
         self.l2_bias = nn.Parameter(torch.empty(L2_SIZE))
         self.l3 = nn.Linear(L2_SIZE, L3_SIZE)
         self.out = nn.Linear(L3_SIZE, 1)
@@ -48,8 +50,12 @@ class NNUE(nn.Module):
 
 
     def forward(self, ft_stm, ft_opp):
-        x_stm = torch.clamp(self.l1(ft_stm), 0.0, 1.0)
-        x_opp = torch.clamp(self.l1(ft_opp), 0.0, 1.0)
+        l1_stm = torch.clamp(self.l1(ft_stm), 0.0, 1.0)
+        l1_opp = torch.clamp(self.l1(ft_opp), 0.0, 1.0)
+
+        # pairwise multiplication
+        x_stm = l1_stm[..., :HALF_L1] * l1_stm[..., HALF_L1:]
+        x_opp = l1_opp[..., :HALF_L1] * l1_opp[..., HALF_L1:]
 
         x = self.l2_bias + (x_stm @ self.l2_weight_stm + x_opp @ self.l2_weight_opp)
 
@@ -128,7 +134,7 @@ def train(data_file, num_positions, epochs, batch_size):
 
             opt.zero_grad()
             out = model(x_stm, x_opp)
-            target = torch.sigmoid(ev.float() / SCALE).squeeze(-1)
+            target = torch.sigmoid(ev / SCALE).squeeze(-1)
             loss = loss_fn(out, target)
             loss.backward()
             opt.step()
@@ -164,7 +170,7 @@ def train(data_file, num_positions, epochs, batch_size):
 
 
 if __name__ == "__main__":
-    total_positions = 5000000000
+    total_positions = 7000000000
     batch_size = 4096
     train_positions = batch_size * (total_positions // batch_size)
     train("data.bin", train_positions, 2, batch_size)

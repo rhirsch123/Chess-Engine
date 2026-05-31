@@ -41,6 +41,7 @@ public:
     ContinuationHistory cont_history;
     CaptureHistory capture_history;
     KillerHistory killers;
+    PawnCorrectionHistory pawn_corrhist;
 
     // late move pruning cutoff by depth and improving
     int lmp_table[MAX_DEPTH][2];
@@ -67,6 +68,8 @@ public:
     
     Engine();
     void init();
+
+    int get_corrhist_adjustment(Position& position);
 
     void make_move(Position& position, Move move, int ply);
 
@@ -97,6 +100,7 @@ public:
     int FP_CAP_BASE = 210;
     int SEE_PRUNE_SCALE = 100;
     int ASPIRATION_DELTA = 20;
+    int PAWN_CORRHIST_WEIGHT = 20;
 };
 
 #endif
