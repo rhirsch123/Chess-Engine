@@ -102,7 +102,7 @@ int main() {
         if (command == "get position") {
             std::ostringstream buffer;
             for (int i = 0; i < 64; i++) {
-                buffer << (int) position.board[i] << '\n';
+                buffer << (int) position.piece_on(i) << '\n';
             }
             buffer << (position.turn == WHITE ? "white\n" : "black\n");
             write_to_pipe(buffer.str());
@@ -124,7 +124,7 @@ int main() {
         } else if (command == "update") {
             position.make_move(move_from_str(rest));
 
-        } else if (command == "make move") {    
+        } else if (command == "make move") {
             Move engine_move = engine.get_move(position);
 
             write_to_pipe(engine_move.toString());

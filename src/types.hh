@@ -73,9 +73,9 @@ enum Color {
 };
 
 enum MoveGenType {
-    TACTIC,
-    QUIET,
-    ALL
+    GEN_TACTIC,
+    GEN_QUIET,
+    GEN_ALL
 };
 
 enum CastleRights {
@@ -86,7 +86,7 @@ enum CastleRights {
 };
 
 enum TerminalState {
-    NONE = 0,
+    NOT_TERMINAL = 0,
     WHITE_MATE = 1,
     BLACK_MATE = 2,
     STALEMATE = 3,
@@ -95,13 +95,13 @@ enum TerminalState {
     INSUFFICIENT_MATERIAL = 6
 };
 
+constexpr int TT_DEPTH_UNSEARCHED = -1;
+
 enum TTBound : uint8_t {
-    EXACT,
+    EXACT_BOUND,
     LOWER_BOUND,
     UPPER_BOUND
 };
-
-#define TT_DEPTH_UNSEARCHED -1
 
 struct TTEntry {
     uint16_t key = 0;
@@ -110,6 +110,28 @@ struct TTEntry {
     uint16_t best_move;
     TTBound type;
     int8_t depth;
+};
+
+enum DirtyType {
+    DIRTY_QUIET,
+    DIRTY_CAPTURE,
+    DIRTY_CASTLE,
+    DIRTY_PROMOTION,
+    DIRTY_EP,
+    DIRTY_CAP_PROMO,
+};
+
+struct DirtyPieces {
+    int white_add0;
+    int black_add0;
+    int white_sub0;
+    int black_sub0;
+    int white_add1;
+    int black_add1;
+    int white_sub1;
+    int black_sub1;
+
+    DirtyType type;
 };
 
 #endif

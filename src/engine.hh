@@ -9,6 +9,7 @@
 #include <chrono>
 #include <math.h>
 
+#include "nnue/nnue.hh"
 #include "transposition_table.hh"
 #include "move.hh"
 #include "position.hh"
@@ -36,12 +37,16 @@ public:
     };
     SearchStack stack[MAX_DEPTH];
 
+    NNUE::Accumulator accumulators[MAX_DEPTH];
+    int acc_index;
+
     // move order heuristics
     QuietHistory quiet_history;
     ContinuationHistory cont_history;
     CaptureHistory capture_history;
     KillerHistory killers;
     PawnCorrectionHistory pawn_corrhist;
+    NonPawnCorrectionHistory nonpawn_corrhist;
 
     // late move pruning cutoff by depth and improving
     int lmp_table[MAX_DEPTH][2];
@@ -69,9 +74,12 @@ public:
     Engine();
     void init();
 
+    void clean_accumulators(int ply);
+    int evaluation(Position& position);
     int get_corrhist_adjustment(Position& position);
 
     void make_move(Position& position, Move move, int ply);
+    void unmake_move(Position& position);
 
     int quiescense(Position& position, int alpha, int beta, int current_depth);
     int negamax(Position& position, int remaining_depth, int current_depth, int alpha, int beta, Move exclude_move = Move());
@@ -88,9 +96,10 @@ public:
     float LMP_SCALE = 0.5;
     float LMP_IMPROVING_BASE = 3;
     float LMP_IMPROVING_SCALE = 0.75;
-    int LMR_BASE = 500;
+    int LMR_BASE = 700;
     int LMR_SCALE = 390;
     int LMR_TTCAP = 1024;
+    int LMR_IMPROVING = 512;
     int LMR_CAPTURE = 1024;
     int LMR_HISTORY = 2400;
     int LMR_GIVES_CHECK = 1024;
@@ -101,6 +110,7 @@ public:
     int SEE_PRUNE_SCALE = 100;
     int ASPIRATION_DELTA = 20;
     int PAWN_CORRHIST_WEIGHT = 20;
+    int NONPAWN_CORRHIST_WEIGHT = 15;
 };
 
 #endif

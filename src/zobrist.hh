@@ -11,11 +11,8 @@ namespace Zobrist {
     extern uint64_t castle_table[4];
     extern uint64_t en_passant_table[8];
     extern uint64_t turn_key;
-    extern uint64_t pawn_table[64];
 
     void init();
-    uint64_t get_hash(uint8_t board[64], int castle_rights, int ep_col, int turn);
-    uint64_t get_pawn_hash(uint64_t pawns);
 };
 
 #endif

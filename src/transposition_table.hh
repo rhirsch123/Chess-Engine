@@ -51,7 +51,7 @@ public:
 
         // always replace
         if (current.key != entry.key || entry.depth >= current.depth || 
-            (entry.depth >= current.depth - 2 && entry.type == EXACT && current.type != EXACT)) {
+           (entry.depth >= current.depth - 2 && entry.type == EXACT_BOUND && current.type != EXACT_BOUND)) {
         
             current = entry;
         }

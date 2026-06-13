@@ -27,10 +27,11 @@ struct MoveList {
     }
 };
 
-void get_pseudo_legal_moves(Position& position, MoveList* move_list, MoveGenType move_type = ALL);
+void get_pseudo_legal_moves(Position& position, MoveList* move_list, MoveGenType move_type = GEN_ALL);
 bool is_legal(Position& position, Move move);
 void get_legal_moves(Position& position, MoveList* move_list);
-bool is_psuedo_legal(Position& position, Move move);
+uint64_t get_piece_moves(Position& position, int square);
+bool is_pseudo_legal(Position& position, Move move);
 bool no_legal_moves(Position& position);
 
 uint64_t bulk_perft(Position& position, int depth);

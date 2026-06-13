@@ -213,10 +213,10 @@ namespace Polyglot {
     const uint64_t turn_key = *(en_passant_table + 8);
 
 
-    uint64_t hash(const Position& position) {
+    uint64_t hash(Position& position) {
         uint64_t hash = 0ULL;
         
-        uint64_t pieces = position.piece_maps[ALL_PIECES][WHITE] | position.piece_maps[ALL_PIECES][BLACK];
+        uint64_t pieces = position.occupancy();
         while (pieces) {
             int square = pop_lsb(pieces);
 
@@ -225,20 +225,20 @@ namespace Polyglot {
 
             // polyglot piece values: BP = 0, WP = 1, BN = 2, WN = 3, ... BK = 10, WK = 11
             // square values: a1 = 0, b1 = 1, ... h8 = 63
-            int piece = position.board[square];
+            int piece = position.piece_on(square);
             int flipped = (7 - row) * 8 + col;
             int index = 64 * (2 * Position::get_piece_type(piece) + (Position::get_color(piece) == WHITE)) + flipped;
             hash ^= piece_table[index];
         }
 
         // castle rights indices: OO_WHITE = 0, OOO_WHITE = 1, OO_BLACK = 2, OOO_BLACK = 3
-        if (position.castle_rights & WHITE_KINGSIDE) hash ^= castle_table[0];
-        if (position.castle_rights & WHITE_QUEENSIDE) hash ^= castle_table[1];
-        if (position.castle_rights & BLACK_KINGSIDE) hash ^= castle_table[2];
-        if (position.castle_rights & BLACK_QUEENSIDE) hash ^= castle_table[3];
+        if (position.castle_rights() & WHITE_KINGSIDE) hash ^= castle_table[0];
+        if (position.castle_rights() & WHITE_QUEENSIDE) hash ^= castle_table[1];
+        if (position.castle_rights() & BLACK_KINGSIDE) hash ^= castle_table[2];
+        if (position.castle_rights() & BLACK_QUEENSIDE) hash ^= castle_table[3];
 
-        if (position.en_passant_col != -1) {
-            hash ^= en_passant_table[position.en_passant_col];
+        if (position.ep_col() != -1) {
+            hash ^= en_passant_table[position.ep_col()];
         }
 
         if (position.turn == WHITE) hash ^= turn_key;
@@ -292,7 +292,7 @@ namespace Polyglot {
         return dist(gen);
     }
 
-    Move get_book_move(const Position& position, std::string file) {
+    Move get_book_move(Position& position, std::string file) {
         std::ifstream book;
         book.open(file, std::ifstream::in | std::ifstream::binary);
         if (!book) {
@@ -334,7 +334,7 @@ namespace Polyglot {
         int to_row = 7 - (to / 8);
         int to_col = to % 8;
         // change castle
-        if (Position::get_piece_type(position.board[from]) == KING) {
+        if (Position::get_piece_type(position.piece_on(from)) == KING) {
             int dist = std::abs(to_col - from_col);
             if (dist == 4) { // queenside
                 to_col = 2;

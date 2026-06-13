@@ -1,4 +1,5 @@
 #include <chrono>
+#include <string>
 
 #include "move.hh"
 #include "position.hh"
@@ -20,9 +21,9 @@ void perft(Position& position, int max_depth) {
     if (position.half_moves == max_depth) {
         leafs++;
 
-        if (position.checkers) {
+        if (position.checkers()) {
             checks++;
-            if (popcount(position.checkers) > 1) double_checks++;
+            if (popcount(position.checkers()) > 1) double_checks++;
             if (position.get_terminal_state() && !position.get_draw()) checkmates++;
         }
 
@@ -36,12 +37,12 @@ void perft(Position& position, int max_depth) {
         Move move = movegen.next_move();
         if (!move) break;
 
-        int cap = position.board[move.to()];
+        int cap = position.piece_on(move.to());
         if (cap && next_leaf) {
             captures++;
         }
 
-        int piece_type = Position::get_piece_type(position.board[move.from()]);
+        int piece_type = Position::get_piece_type(position.piece_on(move.from()));
         if (!cap && piece_type == PAWN && move.from_col() != move.to_col() && next_leaf) {
             en_passant++;
             captures++;
@@ -55,11 +56,27 @@ void perft(Position& position, int max_depth) {
     }
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     Position position;
 
+    int depth = 6;
+    bool bulk = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "-b") {
+            bulk = true;
+        } else {
+            depth = std::stoi(argv[i]);
+        }
+    }
+
     auto start_time = std::chrono::high_resolution_clock::now();
-    perft(position, 6);
+
+    if (bulk) {
+        leafs = bulk_perft(position, depth);
+    } else {
+        perft(position, depth);
+    }
+
     auto end_time = std::chrono::high_resolution_clock::now();
     int time_taken = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
 

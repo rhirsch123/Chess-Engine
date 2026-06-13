@@ -11,33 +11,28 @@ void MovePicker::get_sorted_moves() {
     scored_moves.size = 0;
 
     // score moves
-    if constexpr (Type == TACTIC) {
-        for (Move move : buffer) {
-            int score = 0;
+    for (Move move : buffer) {
+        int score = 0;
+        if constexpr (Type == GEN_TACTIC) {
             score += (1 << 30) * (move.promote_to() == QUEEN);
-            int piece = std::max(0, Position::get_piece_type(position.board[move.from()]));
-            int capture = std::max(0, Position::get_piece_type(position.board[move.to()]));
+            int piece = std::max(0, Position::get_piece_type(position.piece_on(move.from())));
+            int capture = std::max(0, Position::get_piece_type(position.piece_on(move.to())));
+
             score += engine.capture_history[move.to()][piece][capture];
-
-            scored_moves.add(ScoredMove(move, score));
-        }
-    } else {
-        for (Move move : buffer) {
-            int score = 0;
-
+        } else {
             score += 16384 * (move == engine.killers[current_depth][0]);
             score += 8192 * (move == engine.killers[current_depth][1]);
 
             score += 2 * engine.quiet_history[move.from()][move.to()];
 
             // continuation history
-            int piece = position.board[move.from()] - 1;
+            int piece = position.piece_on(move.from()) - 1;
             int ply = current_depth + MAX_CH_PLY;
             score += engine.cont_history[ply - 1][move.to()][piece];
             score += engine.cont_history[ply - 2][move.to()][piece];
-
-            scored_moves.add(ScoredMove(move, score));
         }
+
+        scored_moves.add(ScoredMove(move, score));
     }
 
     std::sort(scored_moves.begin(), scored_moves.end(), [](const ScoredMove& a, const ScoredMove& b) {
@@ -48,12 +43,12 @@ void MovePicker::get_sorted_moves() {
 
 Move MovePicker::next_move() {
     Move move;
-    if (stage == HASH_MOVE) {
+    if (stage == STAGE_HASH_MOVE) {
         move = hash_move;
-        stage = GOOD_TACTICS;
-    } else if (stage == GOOD_TACTICS) {
+        stage = STAGE_GOOD_TACTICS;
+    } else if (stage == STAGE_GOOD_TACTICS) {
         if (index == 0) {
-            get_sorted_moves<TACTIC>();
+            get_sorted_moves<GEN_TACTIC>();
         }
 
         while (index < scored_moves.size) {
@@ -74,24 +69,24 @@ Move MovePicker::next_move() {
             index = 0;
 
             if (only_tactics) {
-                stage = BAD_TACTICS;
+                stage = STAGE_BAD_TACTICS;
                 return next_move();
             }
 
-            stage = QUIETS;
-            get_sorted_moves<QUIET>();
+            stage = STAGE_QUIETS;
+            get_sorted_moves<GEN_QUIET>();
 
             return next_move();
         }
-    } else if (stage == QUIETS) {
+    } else if (stage == STAGE_QUIETS) {
         if (index < scored_moves.size) {
             move = scored_moves.list[index++].move;
         } else {
-            stage = BAD_TACTICS;
+            stage = STAGE_BAD_TACTICS;
             index = 0;
             return next_move();
         }
-    } else if (stage == BAD_TACTICS) {
+    } else if (stage == STAGE_BAD_TACTICS) {
         if (index < bad_tactics.size) {
             move = bad_tactics.moves[index++];
         } else {
@@ -99,7 +94,7 @@ Move MovePicker::next_move() {
         }
     }
     
-    if (move && (move != hash_move || (stage == HASH_MOVE + 1 && index == 0)) && is_legal(position, move)) {
+    if (move && (move != hash_move || (stage == STAGE_HASH_MOVE + 1 && index == 0)) && is_legal(position, move)) {
         return move;
     }
     return next_move();

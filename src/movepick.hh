@@ -11,10 +11,10 @@
 class Engine;
 
 enum MoveStage {
-    HASH_MOVE,
-    GOOD_TACTICS,
-    QUIETS,
-    BAD_TACTICS
+    STAGE_HASH_MOVE,
+    STAGE_GOOD_TACTICS,
+    STAGE_QUIETS,
+    STAGE_BAD_TACTICS
 };
 
 struct ScoredMove {
@@ -26,7 +26,10 @@ struct ScoredMove {
 };
 
 struct ScoredMoveList {
-    ScoredMove list[MAX_MOVES];
+    // initializing this is slow
+    union {
+        ScoredMove list[MAX_MOVES];
+    };
     int size;
 
     ScoredMoveList() : size(0) {}
@@ -54,7 +57,7 @@ class MovePicker {
     Move hash_move;
 public:
     bool only_tactics;
-    MoveStage stage = HASH_MOVE;
+    MoveStage stage = STAGE_HASH_MOVE;
     int index = 0;
 
     MovePicker(Position& position, Engine& engine, int current_depth, Move hash_move = Move(), bool only_tactics = false);

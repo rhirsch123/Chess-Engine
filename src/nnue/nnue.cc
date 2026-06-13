@@ -1,10 +1,6 @@
 #include "nnue.hh"
 
 namespace NNUE {
-    alignas(64) int16_t accumulators[1024][2][L1_SIZE];
-    alignas(64) AccInfo acc_info[1024];
-    alignas(64) uint8_t activated_accumulators[L1_SIZE];
-
     alignas(64) int16_t l1_weights[INPUT_SIZE][L1_SIZE];
     alignas(64) int16_t l1_biases[L1_SIZE];
     alignas(64) int8_t l2_weights[L1_SIZE / 4][L2_SIZE * 4];
@@ -13,6 +9,8 @@ namespace NNUE {
     alignas(64) float l3_biases[L3_SIZE];
     alignas(64) float output_weights[L3_SIZE];
                 float output_bias;
+
+    alignas(64) uint8_t activated_accumulators[L1_SIZE];
 
     static constexpr int jump32 = REGISTER_WIDTH / 32;
     static constexpr int jump16 = REGISTER_WIDTH / 16;
@@ -124,32 +122,30 @@ namespace NNUE {
     }
 
 
-    void reset_accumulators(Position& position) {
-        int ply = position.half_moves;
+    void reset_accumulators(Position& position, Accumulator& accumulator) {
+        std::memcpy(accumulator.acc[WHITE], l1_biases, L1_SIZE * sizeof(int16_t));
+        std::memcpy(accumulator.acc[BLACK], l1_biases, L1_SIZE * sizeof(int16_t));
 
-        std::memcpy(accumulators[ply][WHITE], l1_biases, L1_SIZE * sizeof(int16_t));
-        std::memcpy(accumulators[ply][BLACK], l1_biases, L1_SIZE * sizeof(int16_t));
-
-        int white_king = lsb(position.piece_maps[KING][WHITE]);
-        int black_king = lsb(position.piece_maps[KING][BLACK]);
+        int white_king = position.king_square(WHITE);
+        int black_king = position.king_square(BLACK);
         bool white_mirror = is_mirrored(white_king);
         bool black_mirror = is_mirrored(black_king);
 
-        uint64_t pieces = position.pieces();
+        uint64_t pieces = position.occupancy();
         while (pieces) {
             int square = pop_lsb(pieces);
-            int piece = position.board[square];
+            int piece = position.piece_on(square);
 
             int white_idx = make_index<WHITE>(square, piece, white_mirror);
             int black_idx = make_index<BLACK>(square, piece, black_mirror);
 
             for (int i = 0; i < L1_SIZE; i++) {
-                accumulators[ply][WHITE][i] += l1_weights[white_idx][i];
-                accumulators[ply][BLACK][i] += l1_weights[black_idx][i];
+                accumulator.acc[WHITE][i] += l1_weights[white_idx][i];
+                accumulator.acc[BLACK][i] += l1_weights[black_idx][i];
             }
         }
 
-        acc_info[ply].clean = true;
+        accumulator.clean = true;
     }
 
     static inline float crelu(float x, float max) {
@@ -158,13 +154,12 @@ namespace NNUE {
 
     // not optimized - used for debugging
     int evaluate(Position& position) {
-        reset_accumulators(position);
+        Accumulator accumulator;
+        reset_accumulators(position, accumulator);
 
-        int ply = position.half_moves;
         int turn = position.turn;
-
-        int16_t* acc_stm = accumulators[ply][turn];
-        int16_t* acc_opp = accumulators[ply][!turn];
+        int16_t* acc_stm = accumulator.acc[turn];
+        int16_t* acc_opp = accumulator.acc[!turn];
 
         int l2_layer[L2_SIZE] = {};
         for (int i = 0; i < L1_SIZE / 8; i++) {
@@ -207,70 +202,52 @@ namespace NNUE {
     }
 
 
-    void set_dirty(int ply, DirtyPieces& dps) {
-        acc_info[ply].dps = dps;
-        acc_info[ply].clean = false;
-    }
-
-
     // efficiently update accumulator - only have to worry about the few indices that changed this move
-    void update_accumulators(int ply) {
-        acc_info[ply].clean = true;
-        DirtyPieces &dps = acc_info[ply].dps;
+    void update_accumulators(Accumulator* accumulator) {
+        accumulator->clean = true;
+        DirtyPieces dps = accumulator->dps;
 
-        int16_t* acc_white = accumulators[ply][WHITE];
-        int16_t* acc_black = accumulators[ply][BLACK];
-        int16_t* prev_white = accumulators[ply - 1][WHITE];
-        int16_t* prev_black = accumulators[ply - 1][BLACK];
+        int16_t* __restrict acc_white = accumulator->acc[WHITE];
+        int16_t* __restrict acc_black = accumulator->acc[BLACK];
+        const int16_t* __restrict prev_white = (accumulator - 1)->acc[WHITE];
+        const int16_t* __restrict prev_black = (accumulator - 1)->acc[BLACK];
+
+        const int16_t* __restrict white_add0 = l1_weights[dps.white_add0];
+        const int16_t* __restrict black_add0 = l1_weights[dps.black_add0];
+        const int16_t* __restrict white_sub0 = l1_weights[dps.white_sub0];
+        const int16_t* __restrict black_sub0 = l1_weights[dps.black_sub0];
 
         // compilers should vectorize this automatically
-        if (dps.type == QUIET || dps.type == PROMOTION) {
+        if (dps.type == DIRTY_QUIET || dps.type == DIRTY_PROMOTION) {
             // add sub
             for (int i = 0; i < L1_SIZE; i++) {
-                acc_white[i] = prev_white[i] + l1_weights[dps.white_add0][i] - l1_weights[dps.white_sub0][i];
-                acc_black[i] = prev_black[i] + l1_weights[dps.black_add0][i] - l1_weights[dps.black_sub0][i];
+                acc_white[i] = prev_white[i] + white_add0[i] - white_sub0[i];
+                acc_black[i] = prev_black[i] + black_add0[i] - black_sub0[i];
             }
-        } else if (dps.type == CAPTURE || dps.type == CAP_PROMO || dps.type == EN_PASSANT) {
+        } else if (dps.type == DIRTY_CAPTURE || dps.type == DIRTY_CAP_PROMO || dps.type == DIRTY_EP) {
             // add sub sub
+            const int16_t* __restrict white_sub1 = l1_weights[dps.white_sub1];
+            const int16_t* __restrict black_sub1 = l1_weights[dps.black_sub1];
             for (int i = 0; i < L1_SIZE; i++) {
-                acc_white[i] = prev_white[i]
-                  + l1_weights[dps.white_add0][i] - l1_weights[dps.white_sub0][i] - l1_weights[dps.white_sub1][i];
-                acc_black[i] = prev_black[i]
-                  + l1_weights[dps.black_add0][i] - l1_weights[dps.black_sub0][i] - l1_weights[dps.black_sub1][i];
-            }
-        } else if (dps.type == CASTLE) {
-            // add add sub sub
-            for (int i = 0; i < L1_SIZE; i++) {
-                acc_white[i] = prev_white[i]
-                  + l1_weights[dps.white_add0][i] + l1_weights[dps.white_add1][i]
-                  - l1_weights[dps.white_sub0][i] - l1_weights[dps.white_sub1][i];
-                acc_black[i] = prev_black[i]
-                  + l1_weights[dps.black_add0][i] + l1_weights[dps.black_add1][i]
-                  - l1_weights[dps.black_sub0][i] - l1_weights[dps.black_sub1][i];
+                acc_white[i] = prev_white[i] + white_add0[i] - white_sub0[i] - white_sub1[i];
+                acc_black[i] = prev_black[i] + black_add0[i] - black_sub0[i] - black_sub1[i];
             }
         } else {
-            // null move
-            std::memcpy(acc_white, prev_white, L1_SIZE * sizeof(int16_t));
-            std::memcpy(acc_black, prev_black, L1_SIZE * sizeof(int16_t));
+            // castle: add add sub sub
+            const int16_t* __restrict white_add1 = l1_weights[dps.white_add1];
+            const int16_t* __restrict black_add1 = l1_weights[dps.black_add1];
+            const int16_t* __restrict white_sub1 = l1_weights[dps.white_sub1];
+            const int16_t* __restrict black_sub1 = l1_weights[dps.black_sub1];
+            for (int i = 0; i < L1_SIZE; i++) {
+                acc_white[i] = prev_white[i] + white_add0[i] + white_add1[i] - white_sub0[i] - white_sub1[i];
+                acc_black[i] = prev_black[i] + black_add0[i] + black_add1[i] - black_sub0[i] - black_sub1[i];
+            }
         }
     }
-
-
-    void clean_accumulators(int ply) {
-        int last_clean = ply;
-        while (!acc_info[last_clean].clean) {
-            last_clean--;
-        }
-
-        for (int i = last_clean + 1; i <= ply; i++) {
-            update_accumulators(i);
-        }
-    }
-
 
     // apply crelu + pairwise multiplication to the accumulator and populate active_indices
     // with the indices of nonzero groups of four adjacent values
-    void activate_accumulators(int ply, int turn) {
+    void activate_accumulators(Accumulator& accumulator, int turn) {
         num_active = 0;
 
         #if USE_NEON
@@ -294,7 +271,7 @@ namespace NNUE {
 
         for (int i = 0; i < 2; i++) {
             // side to move first, then opponent
-            int16_t* acc = accumulators[ply][turn ^ i];
+            int16_t* acc = accumulator.acc[turn ^ i];
 
             for (int j = 0; j < L1_SIZE / 2; j += jump16 * 4) {
                 vec_i16 a0 = vec_load_i16(acc + j);
@@ -353,7 +330,7 @@ namespace NNUE {
                 vec_u32 grouped1 = vec_u32(activated1);
 
             #if USE_NEON
-            
+
                 static constexpr uint16_t nnz_mask[8] = {1, 2, 4, 8, 16, 32, 64, 128};
 
                 uint16x8_t combined = vcombine_u16(
@@ -413,9 +390,8 @@ namespace NNUE {
     }
 
 
-    int evaluate_incremental(int ply, int turn) {
-        clean_accumulators(ply);
-        activate_accumulators(ply, turn);
+    int evaluate_incremental(Accumulator& accumulator, int turn) {
+        activate_accumulators(accumulator, turn);
 
         for (int i = 0; i < l2_chunks; i++) {
             l2_acc[i] = v_zero_i32;

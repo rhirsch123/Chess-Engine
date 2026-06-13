@@ -41,18 +41,18 @@ uint64_t get_rook_mask(int square) {
 
     // horizontal
     for (int i = col - 1; i >= 1; i--) {
-        mask |= square_bitboard(row * 8 + i);
+        mask |= square_bb(row * 8 + i);
     }
     for (int i = col + 1; i <= 6; i++) {
-        mask |= square_bitboard(row * 8 + i);
+        mask |= square_bb(row * 8 + i);
     }
 
     // vertical
     for (int i = row - 1; i >= 1; i--) {
-        mask |= square_bitboard(i * 8 + col);
+        mask |= square_bb(i * 8 + col);
     }
     for (int i = row + 1; i <= 6; i++) {
-        mask |= square_bitboard(i * 8 + col);
+        mask |= square_bb(i * 8 + col);
     }
 
     return mask;
@@ -66,7 +66,7 @@ uint64_t get_rook_attacks(int square, uint64_t occupancy) {
 
     // left
     for (int i = col - 1; i >= 0; i--) {
-        uint64_t bb = square_bitboard(row * 8 + i);
+        uint64_t bb = square_bb(row * 8 + i);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -74,7 +74,7 @@ uint64_t get_rook_attacks(int square, uint64_t occupancy) {
     }
     // right
     for (int i = col + 1; i < 8; i++) {
-        uint64_t bb = square_bitboard(row * 8 + i);
+        uint64_t bb = square_bb(row * 8 + i);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -82,7 +82,7 @@ uint64_t get_rook_attacks(int square, uint64_t occupancy) {
     }
     // up
     for (int i = row - 1; i >= 0; i--) {
-        uint64_t bb = square_bitboard(i * 8 + col);
+        uint64_t bb = square_bb(i * 8 + col);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -90,7 +90,7 @@ uint64_t get_rook_attacks(int square, uint64_t occupancy) {
     }
     // down
     for (int i = row + 1; i < 8; i++) {
-        uint64_t bb = square_bitboard(i * 8 + col);
+        uint64_t bb = square_bb(i * 8 + col);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -110,19 +110,19 @@ uint64_t get_bishop_mask(int square) {
 
     // top right
     for (int r = row + 1, c = col + 1; r < 7 && c < 7; r++, c++) {
-        mask |= square_bitboard(r * 8 + c);
+        mask |= square_bb(r * 8 + c);
     }
     // top left
     for (int r = row + 1, c = col - 1; r < 7 && c > 0; r++, c--) {
-        mask |= square_bitboard(r * 8 + c);
+        mask |= square_bb(r * 8 + c);
     }
     // bottom right
     for (int r = row - 1, c = col + 1; r > 0 && c < 7; r--, c++) {
-        mask |= square_bitboard(r * 8 + c);
+        mask |= square_bb(r * 8 + c);
     }
     // bottom left
     for (int r = row - 1, c = col - 1; r > 0 && c > 0; r--, c--) {
-        mask |= square_bitboard(r * 8 + c);
+        mask |= square_bb(r * 8 + c);
     }
 
     return mask;
@@ -135,7 +135,7 @@ uint64_t get_bishop_attacks(int square, uint64_t occupancy) {
 
     // top right
     for (int r = row + 1, c = col + 1; r < 8 && c < 8; r++, c++) {
-        uint64_t bb = square_bitboard(r * 8 + c);
+        uint64_t bb = square_bb(r * 8 + c);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -143,7 +143,7 @@ uint64_t get_bishop_attacks(int square, uint64_t occupancy) {
     }
     // top left
     for (int r = row + 1, c = col - 1; r < 8 && c >= 0; r++, c--) {
-        uint64_t bb = square_bitboard(r * 8 + c);
+        uint64_t bb = square_bb(r * 8 + c);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -151,7 +151,7 @@ uint64_t get_bishop_attacks(int square, uint64_t occupancy) {
     }
     // bottom right
     for (int r = row - 1, c = col + 1; r >= 0 && c < 8; r--, c++) {
-        uint64_t bb = square_bitboard(r * 8 + c);
+        uint64_t bb = square_bb(r * 8 + c);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -159,7 +159,7 @@ uint64_t get_bishop_attacks(int square, uint64_t occupancy) {
     }
     // bottom left
     for (int r = row - 1, c = col - 1; r >= 0 && c >= 0; r--, c--) {
-        uint64_t bb = square_bitboard(r * 8 + c);
+        uint64_t bb = square_bb(r * 8 + c);
         attacks |= bb;
         if (occupancy & bb) {
             break;
@@ -254,8 +254,8 @@ uint64_t pawn_attacks[64][2];
 uint64_t knight_moves[64];
 uint64_t king_moves[64];
 
-// for square1 in check by square2, holds the squares that could block or capture the checker
 uint64_t check_blocks[64][64];
+uint64_t line_bb[64][64];
 
 void init_bitboards() {
     std::vector<std::tuple<int ,int>> knight_dirs = {
@@ -275,7 +275,7 @@ void init_bitboards() {
             int new_row = row + std::get<0>(d);
             int new_col = col + std::get<1>(d);
             if (new_row >= 0 && new_row < 8 && new_col >= 0 && new_col < 8) {
-                moves |= square_bitboard(new_row * 8 + new_col);
+                moves |= square_bb(new_row * 8 + new_col);
             }
         }
         knight_moves[square] = moves;
@@ -285,18 +285,18 @@ void init_bitboards() {
         uint64_t black_attacks = 0ULL;
         if (col > 0) {
             if (row > 0) {
-                white_attacks |= square_bitboard((row - 1) * 8 + (col - 1));
+                white_attacks |= square_bb((row - 1) * 8 + (col - 1));
             }
             if (row < 7) {
-                black_attacks |= square_bitboard((row + 1) * 8 + (col - 1));
+                black_attacks |= square_bb((row + 1) * 8 + (col - 1));
             }
         }
         if (col < 7) {
             if (row > 0) {
-                white_attacks |= square_bitboard((row - 1) * 8 + (col + 1));
+                white_attacks |= square_bb((row - 1) * 8 + (col + 1));
             }
             if (row < 7) {
-                black_attacks |= square_bitboard((row + 1) * 8 + (col + 1));
+                black_attacks |= square_bb((row + 1) * 8 + (col + 1));
             }
         }
         pawn_attacks[square][WHITE] = white_attacks;
@@ -308,7 +308,7 @@ void init_bitboards() {
             int new_row = row + std::get<0>(d);
             int new_col = col + std::get<1>(d);
             if (new_row >= 0 && new_row < 8 && new_col >= 0 && new_col < 8) {
-                moves |= square_bitboard(new_row * 8 + new_col);
+                moves |= square_bb(new_row * 8 + new_col);
             }
         }
         king_moves[square] = moves;
@@ -330,28 +330,40 @@ void init_bitboards() {
         }
     }
 
-    // check blocks
+    // check blocks and line bitboards
     for (int s1 = 0; s1 < 64; s1++) {
         for (int s2 = 0; s2 < 64; s2++) {
-            if (get_bishop_moves(s1, 0ULL) & square_bitboard(s2)) {
-                check_blocks[s1][s2] = get_bishop_moves(s1, square_bitboard(s2)) &
-                                       get_bishop_moves(s2, square_bitboard(s1));
-            } else if (get_rook_moves(s1, 0ULL) & square_bitboard(s2)) {
-                check_blocks[s1][s2] = get_rook_moves(s1, square_bitboard(s2)) &
-                                       get_rook_moves(s2, square_bitboard(s1));
+            if (get_bishop_moves(s1, 0ULL) & square_bb(s2)) {
+                check_blocks[s1][s2] = get_bishop_moves(s1, square_bb(s2)) &
+                                       get_bishop_moves(s2, square_bb(s1));
+
+                line_bb[s1][s2] = (get_bishop_moves(s1, 0ULL) & get_bishop_moves(s2, 0ULL))
+                                  | square_bb(s1) | square_bb(s2);
+            } else if (get_rook_moves(s1, 0ULL) & square_bb(s2)) {
+                check_blocks[s1][s2] = get_rook_moves(s1, square_bb(s2)) &
+                                       get_rook_moves(s2, square_bb(s1));
+
+                line_bb[s1][s2] = (get_rook_moves(s1, 0ULL) & get_rook_moves(s2, 0ULL))
+                                  | square_bb(s1) | square_bb(s2);
             } else {
                 check_blocks[s1][s2] = 0ULL;
+                line_bb[s1][s2] = 0ULL;
             }
 
             // capture the checker
-            check_blocks[s1][s2] |= square_bitboard(s2);
+            check_blocks[s1][s2] |= square_bb(s2);
         }
     }
 }
 
 
+// for square1 in check by square2, gives the squares that could block or capture the checker
 uint64_t get_check_blocks(int s1, int s2) {
     return check_blocks[s1][s2];
+}
+
+uint64_t get_line_bb(int s1, int s2) {
+    return line_bb[s1][s2];
 }
 
 

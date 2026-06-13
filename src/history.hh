@@ -24,6 +24,9 @@ using KillerHistory = Move[MAX_DEPTH][2];
 // [color][hash index]
 using PawnCorrectionHistory = int[2][CORRHIST_SIZE];
 
+// [color][hash index]
+using NonPawnCorrectionHistory = int[2][CORRHIST_SIZE];
+
 
 inline int history_bonus(int depth) {
     return 16 * depth * depth + 100 * depth;
@@ -69,6 +72,16 @@ inline void update_pawn_corrhist(PawnCorrectionHistory& hist, int color, uint64_
     update = std::min(update, 128);
     update = std::max(update, -128);
     update_history_entry(hist[color][key % CORRHIST_SIZE], update, MAX_CORRHIST);
+}
+
+
+inline void update_nonpawn_corrhist(NonPawnCorrectionHistory& hist, int color, uint64_t white_key, uint64_t black_key,
+                                    int depth, int diff) {
+    int update = diff * depth / 8;
+    update = std::min(update, 128);
+    update = std::max(update, -128);
+    update_history_entry(hist[color][white_key % CORRHIST_SIZE], update, MAX_CORRHIST);
+    update_history_entry(hist[color][black_key % CORRHIST_SIZE], update, MAX_CORRHIST);
 }
 
 #endif

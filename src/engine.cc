@@ -2,14 +2,8 @@
 #include "polyglot.hh"
 
 Engine::Engine() : transposition_table(Hash) {
+    NNUE::init();
     init();
-}
-
-static inline int evaluation(Position& position) {
-    int val = NNUE::evaluate_incremental(position.half_moves, position.turn);
-    val = std::max(val, -MATE_SCORE);
-    val = std::min(val, MATE_SCORE);
-    return val;
 }
 
 static inline bool is_mate_score(int val) {
@@ -21,16 +15,53 @@ static inline int get_milli_duration(time_point start) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
 }
 
+void Engine::clean_accumulators(int ply) {
+    int last_clean = ply;
+    while (!accumulators[last_clean].clean) {
+        last_clean--;
+    }
+
+    for (int i = last_clean + 1; i <= ply; i++) {
+        update_accumulators(&accumulators[i]);
+    }
+}
+
+int Engine::evaluation(Position& position) {
+    clean_accumulators(acc_index);
+    int val = NNUE::evaluate_incremental(accumulators[acc_index], position.turn);
+    val = std::max(val, -MATE_SCORE);
+    val = std::min(val, MATE_SCORE);
+
+    return val;
+}
 
 int Engine::get_corrhist_adjustment(Position& position) {
-    int adj = PAWN_CORRHIST_WEIGHT * pawn_corrhist[position.turn][position.pawn_hash % CORRHIST_SIZE];
+    int adj = PAWN_CORRHIST_WEIGHT * pawn_corrhist[position.turn][position.pawn_key() % CORRHIST_SIZE];
+    adj += NONPAWN_CORRHIST_WEIGHT * nonpawn_corrhist[position.turn][position.nonpawn_key(WHITE) % CORRHIST_SIZE];
+    adj += NONPAWN_CORRHIST_WEIGHT * nonpawn_corrhist[position.turn][position.nonpawn_key(BLACK) % CORRHIST_SIZE];
     return adj / 256;
 }
 
 void Engine::make_move(Position& position, Move move, int ply) {    
     total_nodes++;
     stack[ply].move = move;
-    position.make_move(move);
+
+    DirtyPieces dps = position.make_move(move);
+
+    NNUE::Accumulator &acc = accumulators[++acc_index];
+    acc.dps = dps;
+    acc.clean = false;
+
+    // if the king switches halves, the accumulator cannot be efficiently updated
+    int piece_type = Position::get_piece_type(position.piece_on(move.to()));
+    if (piece_type == KING && NNUE::is_mirrored(move.from()) != NNUE::is_mirrored(move.to())) {
+        NNUE::reset_accumulators(position, acc);
+    }
+}
+
+void Engine::unmake_move(Position& position) {
+    position.pop();
+    acc_index--;
 }
 
 // shorter search at the end of negamax to only evaluate quiet positions
@@ -51,26 +82,24 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
 
     Move hash_move;
     TTEntry tt;
-    bool transposition_found = transposition_table.get(position.hash_value, tt);
+    bool transposition_found = transposition_table.get(position.pos_key(), tt);
 
     if (transposition_found && tt.best_move) {
         hash_move = Move(tt.best_move);
-        if (!is_psuedo_legal(position, hash_move) || !is_legal(position, hash_move)) {
+        if (!is_pseudo_legal(position, hash_move) || !is_legal(position, hash_move)) {
             transposition_found = false;
             hash_move = Move();
         }
     }
 
-    if (transposition_found && !pv_node && tt.depth != TT_DEPTH_UNSEARCHED
-        && position.half_moves - position.last_threefold_reset < 90) {
-
+    if (transposition_found && !pv_node && tt.depth != TT_DEPTH_UNSEARCHED && position.fifty_move_count() < 90) {
         if (tt.value >= MATE_SCORE - MAX_DEPTH) {
             tt.value -= current_depth;
         } else if (tt.value <= -MATE_SCORE + MAX_DEPTH) {
             tt.value += current_depth;
         }
 
-        if (tt.type == EXACT || (tt.type == UPPER_BOUND && tt.value <= alpha) || 
+        if (tt.type == EXACT_BOUND || (tt.type == UPPER_BOUND && tt.value <= alpha) ||
            (tt.type == LOWER_BOUND && tt.value >= beta)) {
             return tt.value;
         }
@@ -81,57 +110,38 @@ int Engine::quiescense(Position& position, int alpha, int beta, int current_dept
 
     if (!transposition_found) {
         transposition_table.insert(
-            position.hash_value,
+            position.pos_key(),
             0,
             (int16_t) raw_eval,
             0,
-            EXACT,
+            EXACT_BOUND,
             TT_DEPTH_UNSEARCHED
         );
     }
 
     alpha = std::max(alpha, static_eval);
-    if (alpha >= beta || current_depth >= MAX_DEPTH) {
+    if (alpha >= beta || current_depth >= MAX_DEPTH - 1) {
         return static_eval;
     }
 
-    if (hash_move) {
-        // if hash move is tactic
-        if (position.board[hash_move.to()] || hash_move.promote_to()) {
-            make_move(position, hash_move, current_depth);
-            int val = -quiescense(position, -beta, -alpha, current_depth + 1);
-            position.pop();
+    bool in_check = position.checkers();
 
-            alpha = std::max(alpha, val);
-            if (alpha >= beta) {
-                return val;
-            }
-        } else {
-            return static_eval;
-        }
-    }
-
-    bool in_check = position.checkers;
-
-    MovePicker move_picker(position, *this, current_depth, Move(), true);
+    bool tt_tactic = position.piece_on(hash_move.to()) || hash_move.promote_to();
+    MovePicker move_picker(position, *this, current_depth, tt_tactic ? hash_move : Move(), true);
     while (true) {
         Move move = move_picker.next_move();
         if (!move) {
             break;
         }
 
-        if (move == hash_move) {
-            continue;
-        }
-
         // SEE pruning
-        if (!in_check && move_picker.stage == BAD_TACTICS) {
+        if (!in_check && move_picker.stage == STAGE_BAD_TACTICS) {
             continue;
         }
 
         make_move(position, move, current_depth);
         int val = -quiescense(position, -beta, -alpha, current_depth + 1);
-        position.pop();
+        unmake_move(position);
 
         alpha = std::max(alpha, val);
         if (alpha >= beta) {
@@ -171,28 +181,31 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         }
     }
 
-    bool in_check = position.checkers;
-    if (current_depth >= MAX_DEPTH || (remaining_depth <= 0 && !in_check)) {
+    bool in_check = position.checkers();
+    if (current_depth >= MAX_DEPTH - 1 || (remaining_depth <= 0 && !in_check)) {
         return quiescense(position, alpha, beta, current_depth);
     }
     remaining_depth = std::max(0, remaining_depth);
 
+    killers[current_depth + 1][0] = Move();
+    killers[current_depth + 1][1] = Move();
+
     // check for transposition
     Move hash_move;
     TTEntry tt;
-    bool transposition_found = !exclude_move && transposition_table.get(position.hash_value, tt);
+    bool transposition_found = transposition_table.get(position.pos_key(), tt);
 
     if (transposition_found && tt.best_move) {
         hash_move = Move(tt.best_move);
         // careful of hash collisions
-        if (!is_psuedo_legal(position, hash_move)) {
+        if (!is_pseudo_legal(position, hash_move)) {
             transposition_found = false;
             hash_move = Move();
         }
     }
 
-    if (transposition_found && !pv_node && tt.depth >= remaining_depth
-        && position.half_moves - position.last_threefold_reset < 90) {
+    if (transposition_found && !exclude_move && !pv_node && tt.depth >= remaining_depth
+        && position.fifty_move_count() < 90) {
 
         if (tt.value >= MATE_SCORE - MAX_DEPTH) {
             tt.value -= current_depth;
@@ -200,13 +213,13 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             tt.value += current_depth;
         }
 
-        if (tt.type == EXACT || (tt.type == UPPER_BOUND && tt.value <= alpha) || 
+        if (tt.type == EXACT_BOUND || (tt.type == UPPER_BOUND && tt.value <= alpha) ||
            (tt.type == LOWER_BOUND && tt.value >= beta)) {
             return tt.value;
         }
     }
 
-    bool tt_capture = hash_move && position.board[hash_move.to()];
+    bool tt_capture = hash_move && position.piece_on(hash_move.to());
 
     int raw_eval = transposition_found ? tt.static_eval : evaluation(position);
     int static_eval = raw_eval;
@@ -217,11 +230,11 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
     // cache static eval
     if (!transposition_found) {
         transposition_table.insert(
-            position.hash_value,
+            position.pos_key(),
             0,
             (int16_t) raw_eval,
             0,
-            EXACT,
+            EXACT_BOUND,
             TT_DEPTH_UNSEARCHED
         );
     }
@@ -241,39 +254,39 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
     // null move pruning
     // first try doing nothing and passing the turn. Assumes we are not in zugzwang
-    uint64_t non_pawns = position.piece_maps[ALL_PIECES][position.turn] & 
-                        ~position.piece_maps[PAWN][position.turn] &
-                        ~position.piece_maps[KING][position.turn];
-    bool do_null_prune = !pv_node && !in_check && !exclude_move && stack[current_depth - 1].move && remaining_depth >= 3
-      && static_eval >= beta && non_pawns && (!transposition_found || tt.type == LOWER_BOUND || tt.value >= beta);
-    
-    if (do_null_prune) {
+    uint64_t non_pawns = position.piece_bb(ALL_PIECES, position.turn) & 
+                        ~position.piece_bb(PAWN, position.turn) &
+                        ~position.piece_bb(KING, position.turn);
+    if (   !pv_node
+        && !in_check
+        && !exclude_move
+        && stack[current_depth - 1].move
+        && remaining_depth >= 3
+        && static_eval >= beta
+        && non_pawns
+        && (!transposition_found || tt.type == LOWER_BOUND || tt.value >= beta)) {
+            
         // make null move
         total_nodes++;
         stack[current_depth].move = Move();
 
-        uint64_t hash = position.hash_value;
-        int ep_col = position.en_passant_col;
+        uint64_t hash = position.pos_key();
+        int ep_col = position.ep_col();
         if (ep_col != -1) {
-            position.hash_value ^= Zobrist::en_passant_table[ep_col];
+            position.state->hash_value ^= Zobrist::en_passant_table[ep_col];
         }
-        position.en_passant_col = -1;
+        position.state->en_passant_col = -1;
         position.turn = !position.turn;
-        position.hash_value ^= Zobrist::turn_key;
-        position.half_moves++;
-        
-        NNUE::DirtyPieces dps;
-        dps.type = NNUE::NONE;
-        NNUE::set_dirty(position.half_moves, dps);
+        position.state->hash_value ^= Zobrist::turn_key;
+        position.state->pinned[position.turn] = position.get_pinned(position.turn);
 
         int R = 4 + remaining_depth / 4;
         int val = -negamax(position, remaining_depth - 1 - R, current_depth + 1, -beta, -beta + 1);
 
         // unmake
-        position.half_moves--;
         position.turn = !position.turn;
-        position.hash_value = hash;
-        position.en_passant_col = ep_col;
+        position.state->hash_value = hash;
+        position.state->en_passant_col = ep_col;
         
         if (val >= beta) {
             if (is_mate_score(val)) {
@@ -300,21 +313,21 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             continue;
         }
 
-        int piece = position.board[move.from()];
-        int capture = position.board[move.to()];
+        int piece = position.piece_on(move.from());
+        int capture = position.piece_on(move.to());
         int piece_type = Position::get_piece_type(piece);
         int capture_type = Position::get_piece_type(capture);
 
         move_num++;
         bool move_found = local_max > -INF;
 
-        if (move_found && !root_node && !in_check) {
+        if (!root_node && !in_check && !is_mate_score(local_max)) {
             // late move pruning
-            if (remaining_depth <= 5 && move_picker.stage <= QUIETS
+            if (remaining_depth <= 5 && move_picker.stage <= STAGE_QUIETS
                 && move_num >= lmp_table[remaining_depth][improving]) {
-                if (move_picker.stage == QUIETS) {
+                if (move_picker.stage == STAGE_QUIETS) {
                     move_picker.index = 0;
-                    move_picker.stage = BAD_TACTICS;
+                    move_picker.stage = STAGE_BAD_TACTICS;
                     continue;
                 } else {
                     move_picker.only_tactics = true;
@@ -324,18 +337,18 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             // futility pruning
             // if static eval is well below alpha, quiet moves and bad tactics are unlikely to improve
             // the position enough to matter
-            if (remaining_depth <= 6 && move_picker.stage <= QUIETS
+            if (remaining_depth <= 6 && move_picker.stage <= STAGE_QUIETS
                 && static_eval + FP_BASE + FP_SCALE * remaining_depth <= alpha) {
-                if (move_picker.stage == QUIETS) {
+                if (move_picker.stage == STAGE_QUIETS) {
                     move_picker.index = 0;
-                    move_picker.stage = BAD_TACTICS;
+                    move_picker.stage = STAGE_BAD_TACTICS;
                     continue;
                 } else {
                     move_picker.only_tactics = true;
                 }
             }
 
-            if (remaining_depth <= 4 && capture && move_picker.stage == BAD_TACTICS) {
+            if (remaining_depth <= 4 && capture && move_picker.stage == STAGE_BAD_TACTICS) {
                 int hist = capture_history[move.to()][piece_type][capture_type];
                 if (static_eval + FP_CAP_BASE + FP_CAP_SCALE * remaining_depth +
                     piece_values[capture_type] + hist / 8 <= alpha) {
@@ -344,7 +357,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             }
 
             // static exchange evaluation pruning
-            if (remaining_depth <= 6 && move_picker.stage == QUIETS) {
+            if (remaining_depth <= 6 && move_picker.stage == STAGE_QUIETS) {
                 int threshold = SEE_PRUNE_SCALE * remaining_depth;
                 if (!position.SEE(move, -threshold)) {
                     continue;
@@ -354,11 +367,16 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
         // singular extension: hash move seems to be significantly better than all others
         int extension = 0;
-        if (move == hash_move && !root_node && remaining_depth >= 6 && (tt.type == LOWER_BOUND || tt.type == EXACT)
-            && tt.depth >= remaining_depth - 3 && !exclude_move) {
+        if (   move == hash_move
+            && !root_node
+            && remaining_depth >= 6
+            && (tt.type == LOWER_BOUND || tt.type == EXACT_BOUND)
+            && tt.depth >= remaining_depth - 3
+            && !exclude_move) {
+
             int singular_depth = remaining_depth / 2;
             int singular_beta = tt.value - remaining_depth;
-            int val = negamax(position, singular_depth, current_depth + 1, singular_beta - 1, singular_beta, hash_move);
+            int val = negamax(position, singular_depth, current_depth, singular_beta - 1, singular_beta, hash_move);
 
             if (val < singular_beta) {
                 extension = 1;
@@ -371,6 +389,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
         if (!pv_node && moves_played >= 2 && remaining_depth >= 3) {
             R = lmr_table[remaining_depth][moves_played];
             R += tt_capture * LMR_TTCAP;
+            R -= improving * LMR_IMPROVING;
             
             if (capture) {
                 R -= LMR_CAPTURE;
@@ -381,9 +400,9 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
 
         make_move(position, move, current_depth);
 
-        transposition_table.prefetch(position.hash_value);
+        transposition_table.prefetch(position.pos_key());
 
-        if (position.checkers && (move_picker.stage == GOOD_TACTICS)) {
+        if (position.checkers() && (move_picker.stage == STAGE_GOOD_TACTICS)) {
             R -= LMR_GIVES_CHECK;
             extension++;
         }
@@ -404,7 +423,7 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
             }
         }
 
-        position.pop();
+        unmake_move(position);
 
         moves_played++;
 
@@ -454,12 +473,12 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
     } else if (local_max >= beta) {
         tt_bound = LOWER_BOUND;
     } else {
-        tt_bound = EXACT;
+        tt_bound = EXACT_BOUND;
     }
 
     if (!exclude_move) { // not from singular search
         transposition_table.insert(
-            position.hash_value,
+            position.pos_key(),
             (int16_t) local_max,
             (int16_t) raw_eval,
             local_best_move.move,
@@ -469,10 +488,12 @@ int Engine::negamax(Position& position, int remaining_depth, int current_depth, 
     }
 
     // update correction history
-    if (!in_check && !position.board[local_best_move.to()]
+    if (!in_check && !position.piece_on(local_best_move.to())
         && !(tt_bound == LOWER_BOUND && local_max <= static_eval)
         && !(tt_bound == UPPER_BOUND && local_max >= static_eval)) {
-        update_pawn_corrhist(pawn_corrhist, position.turn, position.pawn_hash, remaining_depth, local_max - static_eval);
+        update_pawn_corrhist(pawn_corrhist, position.turn, position.pawn_key(), remaining_depth, local_max - static_eval);
+        update_nonpawn_corrhist(nonpawn_corrhist, position.turn, position.nonpawn_key(WHITE), position.nonpawn_key(BLACK),
+                                remaining_depth, local_max - static_eval);
     }
 
     if (root_node) {
@@ -535,6 +556,9 @@ Move Engine::get_move(Position& position, SearchInfo info) {
             return book_move;
         }
     }
+
+    acc_index = 0;
+    NNUE::reset_accumulators(position, accumulators[acc_index]);
 
     int optimal_time = info.time_left / 20 + info.increment / 2;
     if (info.timed_game) {
@@ -647,6 +671,7 @@ void Engine::init() {
     std::memset(cont_history, 0, sizeof(cont_history));
     std::memset(killers, 0, sizeof(killers));
     std::memset(pawn_corrhist, 0, sizeof(pawn_corrhist));
+    std::memset(nonpawn_corrhist, 0, sizeof(nonpawn_corrhist));
 
     init_lmp_table();
     init_lmr_table();

@@ -34,35 +34,6 @@ class Position;
 namespace NNUE {
     const std::string nnue_file = "nnue.bin";
 
-    enum DirtyType {
-        QUIET,
-        CAPTURE,
-        CASTLE,
-        PROMOTION,
-        EN_PASSANT,
-        CAP_PROMO,
-        NONE
-    };
-
-    struct DirtyPieces {
-        int white_add0;
-        int black_add0;
-        int white_sub0;
-        int black_sub0;
-        int white_add1;
-        int black_add1;
-        int white_sub1;
-        int black_sub1;
-
-        DirtyType type;
-    };
-
-    struct AccInfo {
-        DirtyPieces dps;
-        bool clean;
-    };
-
-    
     void init();
 
     // chess is horizontally invariant, so the network is trained with each
@@ -80,14 +51,18 @@ namespace NNUE {
         }
     }
 
-    void reset_accumulators(Position& position);
-    void set_dirty(int ply, DirtyPieces& dps);
-    void update_accumulators(int ply);
-    void clean_accumulators(int ply);
-    void activate_accumulators(int ply, int turn);
+    struct Accumulator {
+        alignas(64) int16_t acc[2][L1_SIZE];
+        DirtyPieces dps;
+        bool clean;
+    };
+
+    void reset_accumulators(Position& position, Accumulator& accumulator);
+    void update_accumulators(Accumulator* accumulator);
+    void activate_accumulators(Accumulator& accumulator, int turn);
 
     int evaluate(Position& position);
-    int evaluate_incremental(int ply, int turn);
+    int evaluate_incremental(Accumulator& accumulator, int turn);
 };
 
 #endif

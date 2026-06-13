@@ -21,7 +21,7 @@ inline uint64_t pop_lsb(uint64_t& bitboard) {
     return square;
 }
 
-inline uint64_t square_bitboard(int square) {
+inline uint64_t square_bb(int square) {
     return 1ULL << square;
 }
 
@@ -78,6 +78,7 @@ void print_bitboard(uint64_t bitboard);
 void init_bitboards();
 
 uint64_t get_check_blocks(int s1, int s2);
+uint64_t get_line_bb(int s1, int s2);
 
 uint64_t get_pawn_attacks(int square, int color);
 uint64_t get_knight_moves(int square);
