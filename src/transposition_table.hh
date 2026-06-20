@@ -37,23 +37,23 @@ public:
     }
 
     void insert(uint64_t key, int16_t value, int16_t static_eval, uint16_t best_move, TTBound type, int8_t depth) {
-        TTEntry entry = {
-            uint16_t(key),
-            value,
-            static_eval,
-            best_move,
-            type,
-            depth
-        };
-
         const uint64_t index = get_index(key);
         TTEntry& current = table[index];
+        uint16_t key16 = uint16_t(key);
 
-        // always replace
-        if (current.key != entry.key || entry.depth >= current.depth || 
-           (entry.depth >= current.depth - 2 && entry.type == EXACT_BOUND && current.type != EXACT_BOUND)) {
-        
-            current = entry;
+        if (best_move || key16 != current.key) {
+            current.best_move = best_move;
+        }
+
+        if (   key16 != current.key
+            || depth >= current.depth
+            || (type == EXACT_BOUND && current.type != EXACT_BOUND)) {
+
+            current.key = key16;
+            current.value = value;
+            current.static_eval = static_eval;
+            current.type = type;
+            current.depth = depth;
         }
     }
 

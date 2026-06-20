@@ -92,19 +92,22 @@ public:
 
     // tunable search parameters
     int RFP_SCALE = 70;
+    int NMP_SCALE = 20;
+    int NMP_OFFSET = 125;
     float LMP_BASE = 2.5;
     float LMP_SCALE = 0.5;
     float LMP_IMPROVING_BASE = 3;
     float LMP_IMPROVING_SCALE = 0.75;
     int LMR_BASE = 700;
     int LMR_SCALE = 390;
+    int LMR_PV = 1024;
     int LMR_TTCAP = 1024;
     int LMR_IMPROVING = 512;
     int LMR_CAPTURE = 1024;
     int LMR_HISTORY = 2400;
     int LMR_GIVES_CHECK = 1024;
-    int FP_BASE = 100;
-    int FP_SCALE = 100;
+    int FP_BASE = 250;
+    int FP_SCALE = 130;
     int FP_CAP_SCALE = 250;
     int FP_CAP_BASE = 210;
     int SEE_PRUNE_SCALE = 100;

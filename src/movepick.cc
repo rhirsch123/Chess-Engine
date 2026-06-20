@@ -1,7 +1,12 @@
 #include "movepick.hh"
 
 MovePicker::MovePicker(Position& position, Engine& engine, int current_depth, Move hash_move, bool only_tactics)
-: position(position), engine(engine), current_depth(current_depth), hash_move(hash_move), only_tactics(only_tactics) {}
+: position(position), engine(engine), current_depth(current_depth), hash_move(hash_move), only_tactics(only_tactics) {
+    killer = engine.killers[current_depth];
+    if (killer == hash_move) {
+        killer = Move();
+    }
+}
 
 template<MoveGenType Type>
 void MovePicker::get_sorted_moves() {
@@ -20,9 +25,6 @@ void MovePicker::get_sorted_moves() {
 
             score += engine.capture_history[move.to()][piece][capture];
         } else {
-            score += 16384 * (move == engine.killers[current_depth][0]);
-            score += 8192 * (move == engine.killers[current_depth][1]);
-
             score += 2 * engine.quiet_history[move.from()][move.to()];
 
             // continuation history
@@ -44,8 +46,12 @@ void MovePicker::get_sorted_moves() {
 Move MovePicker::next_move() {
     Move move;
     if (stage == STAGE_HASH_MOVE) {
-        move = hash_move;
-        stage = STAGE_GOOD_TACTICS;
+        if (hash_move) {
+            move = hash_move;
+        } else {
+            stage = STAGE_GOOD_TACTICS;
+            return next_move();
+        }
     } else if (stage == STAGE_GOOD_TACTICS) {
         if (index == 0) {
             get_sorted_moves<GEN_TACTIC>();
@@ -73,12 +79,21 @@ Move MovePicker::next_move() {
                 return next_move();
             }
 
+            stage = STAGE_KILLER;
+            return next_move();
+        }
+    } else if (stage == STAGE_KILLER) {
+        if (killer && is_pseudo_legal(position, killer)) {
+            move = killer;
+        } else {
             stage = STAGE_QUIETS;
-            get_sorted_moves<GEN_QUIET>();
-
             return next_move();
         }
     } else if (stage == STAGE_QUIETS) {
+        if (index == 0) {
+            get_sorted_moves<GEN_QUIET>();
+        }
+
         if (index < scored_moves.size) {
             move = scored_moves.list[index++].move;
         } else {
@@ -94,8 +109,23 @@ Move MovePicker::next_move() {
         }
     }
     
-    if (move && (move != hash_move || (stage == STAGE_HASH_MOVE + 1 && index == 0)) && is_legal(position, move)) {
-        return move;
+    if (!move) return next_move();
+
+    if (move == hash_move) {
+        if (stage != STAGE_HASH_MOVE) {
+            return next_move();
+        }
+        stage = STAGE_GOOD_TACTICS;
     }
-    return next_move();
+
+    if (move == killer) {
+        if (stage != STAGE_KILLER) {
+            return next_move();
+        }
+        stage = STAGE_QUIETS;
+    }
+
+    if (!is_legal(position, move)) return next_move();
+
+    return move;
 }

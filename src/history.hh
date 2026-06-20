@@ -19,7 +19,7 @@ using ContinuationHistory = int[MAX_DEPTH + MAX_CH_PLY][64][12];
 using CaptureHistory = int[64][6][5];
 
 // moves that caused cutoff at the same depth level
-using KillerHistory = Move[MAX_DEPTH][2];
+using KillerHistory = Move[MAX_DEPTH];
 
 // [color][hash index]
 using PawnCorrectionHistory = int[2][CORRHIST_SIZE];
@@ -58,13 +58,6 @@ inline void update_continuation_history(ContinuationHistory& hist, int ply, int 
 inline void update_capture_history(CaptureHistory& hist, int to, int piece_type, int capture, int depth, bool good) {
     int update = good ? history_bonus(depth) : history_malus(depth);
     update_history_entry(hist[to][piece_type][capture], update);
-}
-
-inline void update_killers(KillerHistory& killers, Move move, int ply) {
-    if (killers[ply][0] != move) {
-        killers[ply][1] = killers[ply][0];
-        killers[ply][0] = move;
-    }
 }
 
 inline void update_pawn_corrhist(PawnCorrectionHistory& hist, int color, uint64_t key, int depth, int diff) {

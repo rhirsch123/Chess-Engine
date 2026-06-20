@@ -13,6 +13,7 @@ class Engine;
 enum MoveStage {
     STAGE_HASH_MOVE,
     STAGE_GOOD_TACTICS,
+    STAGE_KILLER,
     STAGE_QUIETS,
     STAGE_BAD_TACTICS
 };
@@ -55,6 +56,7 @@ class MovePicker {
     MoveList bad_tactics;
     int current_depth;
     Move hash_move;
+    Move killer;
 public:
     bool only_tactics;
     MoveStage stage = STAGE_HASH_MOVE;
