@@ -10,10 +10,12 @@
 
 class Engine;
 
-enum MoveStage {
-    STAGE_HASH_MOVE,
+enum MoveStage : int {
+    STAGE_HASH_MOVE = 0,
+    STAGE_GEN_TACTICS,
     STAGE_GOOD_TACTICS,
     STAGE_KILLER,
+    STAGE_GEN_QUIETS,
     STAGE_QUIETS,
     STAGE_BAD_TACTICS
 };
@@ -57,13 +59,13 @@ class MovePicker {
     int current_depth;
     Move hash_move;
     Move killer;
+    int index = 0;
 public:
     bool only_tactics;
-    MoveStage stage = STAGE_HASH_MOVE;
-    int index = 0;
+    int stage = STAGE_HASH_MOVE;
 
     MovePicker(Position& position, Engine& engine, int current_depth, Move hash_move = Move(), bool only_tactics = false);
-    template<MoveGenType T> void get_sorted_moves();
+    template<MoveGenType T> void get_scored_moves();
     Move next_move();
 };
 

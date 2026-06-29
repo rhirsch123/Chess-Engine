@@ -37,6 +37,10 @@ public:
     };
     SearchStack stack[MAX_DEPTH];
 
+    // used in tm
+    int root_move_nodes[64][64];
+    Move current_root_move;
+
     NNUE::Accumulator accumulators[MAX_DEPTH];
     int acc_index;
 

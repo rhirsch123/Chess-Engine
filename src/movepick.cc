@@ -9,7 +9,7 @@ MovePicker::MovePicker(Position& position, Engine& engine, int current_depth, Mo
 }
 
 template<MoveGenType Type>
-void MovePicker::get_sorted_moves() {
+void MovePicker::get_scored_moves() {
     MoveList buffer;
     get_pseudo_legal_moves(position, &buffer, Type);
 
@@ -36,96 +36,111 @@ void MovePicker::get_sorted_moves() {
 
         scored_moves.add(ScoredMove(move, score));
     }
+}
 
-    std::sort(scored_moves.begin(), scored_moves.end(), [](const ScoredMove& a, const ScoredMove& b) {
-        return a.score > b.score;
-    });
+static inline Move pop_best(ScoredMoveList& moves) {
+    int best_idx = 0;
+    for (int i = 1; i < moves.size; i++) {
+        if (moves.list[i].score > moves.list[best_idx].score) {
+            best_idx = i;
+        }
+    }
+
+    Move best_move = moves.list[best_idx].move;
+    moves.list[best_idx] = moves.list[--moves.size];
+    return best_move;
 }
 
 
 Move MovePicker::next_move() {
-    Move move;
-    if (stage == STAGE_HASH_MOVE) {
-        if (hash_move) {
-            move = hash_move;
-        } else {
-            stage = STAGE_GOOD_TACTICS;
-            return next_move();
-        }
-    } else if (stage == STAGE_GOOD_TACTICS) {
-        if (index == 0) {
-            get_sorted_moves<GEN_TACTIC>();
-        }
-
-        while (index < scored_moves.size) {
-            ScoredMove sm = scored_moves.list[index];
-            Move m = sm.move;
-            // under-promotions or negative static exchange evaluation
-            if ((m.promote_to() && m.promote_to() != QUEEN) || !position.SEE(m)) {
-                bad_tactics.add(m);
-                index++;
-            } else {
-                break;
+    switch (stage) {
+        case STAGE_HASH_MOVE: {
+            stage++;
+            if (hash_move) {
+                return hash_move;
             }
+
+            [[fallthrough]];
         }
 
-        if (index < scored_moves.size) {
-            move = scored_moves.list[index++].move;
-        } else {
-            index = 0;
+        case STAGE_GEN_TACTICS: {
+            get_scored_moves<GEN_TACTIC>();
+            stage++;
+
+            [[fallthrough]];
+        }
+
+        case STAGE_GOOD_TACTICS: {
+            while (scored_moves.size) {
+                Move move = pop_best(scored_moves);
+
+                if (move == hash_move || move == killer) {
+                    continue;
+                }
+
+                // under-promotions or negative static exchange evaluation
+                if ((move.promote_to() && move.promote_to() != QUEEN) || !position.SEE(move)) {
+                    bad_tactics.add(move);
+                } else {
+                    return move;
+                }
+            }
 
             if (only_tactics) {
                 stage = STAGE_BAD_TACTICS;
                 return next_move();
             }
 
-            stage = STAGE_KILLER;
-            return next_move();
-        }
-    } else if (stage == STAGE_KILLER) {
-        if (killer && is_pseudo_legal(position, killer)) {
-            move = killer;
-        } else {
-            stage = STAGE_QUIETS;
-            return next_move();
-        }
-    } else if (stage == STAGE_QUIETS) {
-        if (index == 0) {
-            get_sorted_moves<GEN_QUIET>();
+            stage++;
+
+            [[fallthrough]];
         }
 
-        if (index < scored_moves.size) {
-            move = scored_moves.list[index++].move;
-        } else {
-            stage = STAGE_BAD_TACTICS;
-            index = 0;
-            return next_move();
+        case STAGE_KILLER: {
+            stage++;
+            if (killer && is_pseudo_legal(position, killer)) {
+                return killer;
+            }
+
+            [[fallthrough]];
         }
-    } else if (stage == STAGE_BAD_TACTICS) {
-        if (index < bad_tactics.size) {
-            move = bad_tactics.moves[index++];
-        } else {
+
+        case STAGE_GEN_QUIETS: {
+            get_scored_moves<GEN_QUIET>();
+            stage++;
+
+            [[fallthrough]];
+        }
+
+        case STAGE_QUIETS: {
+            while (scored_moves.size) {
+                Move move = pop_best(scored_moves);
+
+                if (move == hash_move || move == killer) {
+                    continue;
+                }
+                return move;
+            }
+
+            stage++;
+
+            [[fallthrough]];
+        }
+
+        case STAGE_BAD_TACTICS: {
+            while (index < bad_tactics.size) {
+                Move move = bad_tactics.moves[index++];
+
+                if (move == hash_move || move == killer) {
+                    continue;
+                }
+                return move;
+            }
+
             return Move();
         }
+
+        default:
+            return Move();
     }
-    
-    if (!move) return next_move();
-
-    if (move == hash_move) {
-        if (stage != STAGE_HASH_MOVE) {
-            return next_move();
-        }
-        stage = STAGE_GOOD_TACTICS;
-    }
-
-    if (move == killer) {
-        if (stage != STAGE_KILLER) {
-            return next_move();
-        }
-        stage = STAGE_QUIETS;
-    }
-
-    if (!is_legal(position, move)) return next_move();
-
-    return move;
 }

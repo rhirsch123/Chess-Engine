@@ -397,7 +397,7 @@ namespace NNUE {
             l2_acc[i] = v_zero_i32;
         }
 
-        // usually only ~10% of the accumulator is active after crelu
+        // usually most of the accumulator is zero after activation
         // inference is sped up by looping through non-zero indices
 
         // to take advantage of vector operations that add adjacent elements,
